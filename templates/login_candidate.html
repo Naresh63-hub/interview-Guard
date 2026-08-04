@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Intervue — Join a Meeting</title>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
+        <script src="https://unpkg.com/@phosphor-icons/web"></script>
+        <link rel="stylesheet" href="/static/styles.css" />
+    </head>
+    <body class="intervue-theme">
+        <div class="intervue-container">
+            <div class="intervue-logo">
+                <i class="ph-fill ph-eye"></i><i class="ph-fill ph-shield-check" style="color: #3b82f6; margin-left: -0.5rem;"></i>
+                Intervue
+            </div>
+            
+            <h2 class="intervue-title">Join a Meeting</h2>
+            <p class="intervue-subtitle">Enter meeting details.</p>
+
+            <input
+                id="meetingId"
+                class="intervue-input"
+                type="text"
+                placeholder="Meeting ID (e.g., 84F00A15)"
+            />
+
+            <input
+                id="candidateName"
+                class="intervue-input"
+                type="text"
+                placeholder="Your Name"
+            />
+
+            <button class="intervue-btn primary" onclick="joinMeeting()">Join Meeting</button>
+            <a href="/" class="intervue-link">Back</a>
+        </div>
+
+        <script>
+            const APP_ORIGIN =
+                window.location.port === "5500"
+                    ? "https://127.0.0.1:5000"
+                    : window.location.origin;
+
+            window.addEventListener('DOMContentLoaded', () => {
+                const params = new URLSearchParams(window.location.search);
+                const mid = params.get('meeting_id');
+                if (mid) {
+                    document.getElementById('meetingId').value = mid;
+                }
+            });
+
+            async function joinMeeting() {
+                const meetingId = document.getElementById("meetingId").value.trim().toUpperCase();
+                const candidateName = document.getElementById("candidateName").value.trim() || "Candidate";
+                
+                if (!meetingId) {
+                    alert("Please enter a meeting ID");
+                    return;
+                }
+
+                try {
+                    // Check if room exists
+                    const response = await fetch(`${APP_ORIGIN}/api/room/${meetingId}`);
+                    if (!response.ok) {
+                        alert("Room not found. Please check the Meeting ID.");
+                        return;
+                    }
+                    
+                    localStorage.setItem("role", "candidate");
+                    localStorage.setItem("displayName", candidateName);
+                    
+                    window.location.href = `${APP_ORIGIN}/candidate_dashboard/${meetingId}`;
+                } catch (e) {
+                    alert("Could not connect to verify the meeting.");
+                }
+            }
+        </script>
+    </body>
+</html>

@@ -1,0 +1,119 @@
+Created At: 2026-08-04T11:35:44Z
+Completed At: 2026-08-04T11:35:44Z
+File Path: `file:///d:/interviewproject/static/ui.js`
+Total Lines: 1571
+Total Bytes: 62050
+Showing lines 1040 to 1150
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+1040:     }
+1041: 
+1042:     if (window.proctoringActive && window.proctoringSettings.gazeCheck) {
+1043:         let pitchThresholdDown = -10;
+1044:         let pitchThresholdUp = 15;
+1045:         let yawThreshold = 15;
+1046: 
+1047:         if (window.proctoringSettings.gazeSensitivity === "low") {
+1048:             pitchThresholdDown = -15;
+1049:             pitchThresholdUp = 20;
+1050:             yawThreshold = 22;
+1051:         } else if (window.proctoringSettings.gazeSensitivity === "high") {
+1052:             pitchThresholdDown = -8;
+1053:             pitchThresholdUp = 12;
+1054:             yawThreshold = 10;
+1055:         }
+1056: 
+1057:         const pitch = data.pose?.pitch || 0;
+1058:         const yaw = data.pose?.yaw || 0;
+1059: 
+1060:         if (direction === "NO_FACE") {
+1061:             lookingAway = true;
+1062:         } else {
+1063:             if (pitch < pitchThresholdDown) {
+1064:                 direction = "LOOKING_DOWN";
+1065:                 lookingAway = true;
+1066:             } else if (pitch > pitchThresholdUp) {
+1067:                 direction = "LOOKING_UP";
+1068:                 lookingAway = true;
+1069:             } else if (yaw < -yawThreshold) {
+1070:                 direction = "RIGHT";
+1071:                 lookingAway = true;
+1072:             } else if (yaw > yawThreshold) {
+1073:                 direction = "LEFT";
+1074:                 lookingAway = true;
+1075:             } else {
+1076:                 if (direction === "LEFT" || direction === "RIGHT") {
+1077:                     if (window.proctoringSettings.gazeSensitivity !== "low") {
+1078:                         lookingAway = true;
+1079:                     } else {
+1080:                         direction = "CENTER";
+1081:                     }
+1082:                 }
+1083:             }
+1084:         }
+1085:     }
+1086: 
+1087:     // Update direction label
+1088:     const dirLabel = document.getElementById("gaze-direction-label");
+1089:     if (dirLabel) dirLabel.textContent = window.proctoringActive ? direction : "AWAITING CAMERA";
+1090: 
+1091:     // Update Head Pose label
+1092:     const poseLabel = document.getElementById('head-pose-label');
+1093:     if (poseLabel) {
+1094:         if (window.proctoringActive && (direction === "LOOKING_DOWN" || direction === "LOOKING_UP")) {
+1095:             poseLabel.textContent = direction;
+1096:         } else {
+1097:             poseLabel.textContent = "FORWARD";
+1098:         }
+1099:     }
+1100: 
+1101:     // Update Faces Detected label
+1102:     const faceCountEl = document.getElementById('face-count-label');
+1103:     if (faceCountEl) {
+1104:         const numFaces = data.multipleFaces ? "2+" : (data.faceDetected ? "1" : "0");
+1105:         faceCountEl.textContent = window.proctoringActive ? numFaces : "0";
+1106:         faceCountEl.className = data.multipleFaces ? 'value red' : 'value white';
+1107:     }
+1108: 
+1109:     // Update environment face visibility
+1110:     const envFace = document.getElementById("env-face");
+1111:     if (envFace)
+1112:         envFace.textContent = data.faceDetected ? "Clear" : "Not Detected";
+1113: 
+1114:     // Animate pupil
+1115:     animatePupil(window.proctoringActive ? direction : "CENTER");
+1116: 
+1117:     if (lookingAway) {
+1118:         suspiciousGazeEvents++;
+1119:         lookAwayFrames++;
+1120:         recentSuspiciousEvents.push(now);
+1121:         // Prune events older than 10s
+1122:         recentSuspiciousEvents = recentSuspiciousEvents.filter(
+1123:             (t) => now - t <= 10000,
+1124:         );
+1125: 
+1126:         let message = `Candidate looking ${direction.toLowerCase()}!`;
+1127:         if (direction === "NO_FACE") message = "Candidate face not detected!";
+1128:         if (direction === "LOOKING_DOWN") message = "Candidate is looking down (reading notes?)";
+1129:         if (direction === "LOOKING_UP") message = "Candidate is looking up significantly.";
+1130: 
+1131:         if (recentSuspiciousEvents.length > 5) {
+1132:             setGazeAlert("⚠ Cheating behavior detected!", true);
+1133:             if (now - (window.lastGazeAuditTime || 0) > 15000) {
+1134:                 UI_UPDATER.addAuditAlert(
+1135:                     "Cheating Suspected",
+1136:                     "Repeated gaze anomalies detected",
+1137:                     "Live",
+1138:                     true,
+1139:                 );
+1140:                 window.lastGazeAuditTime = now;
+1141:               }
+1142:           } else {
+1143:               setGazeAlert(message, true);
+1144:               if (now - (window.lastGazeAuditTime || 0) > 10000) {
+1145:                   UI_UPDATER.addAuditAlert(
+1146:                       "Gaze Anomaly",
+1147:                       message,
+1148:                       "Live",
+1149:                       direction === "NO_FACE" || direction === "LOOKING_DOWN",
+1150:                   );
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

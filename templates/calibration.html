@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Intervue — Gaze Calibration</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/@phosphor-icons/web"></script>
+  <style>
+    :root {
+      --bg-base: #11111b;
+      --bg-surface: #1e1e2e;
+      --accent: #f5c2e7;
+      --accent-rgb: 245, 194, 231;
+      --green: #a6e3a1;
+      --red: #f38ba8;
+      --text: #cdd6f4;
+      --text-muted: #a6adc8;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-base);
+      color: var(--text);
+      font-family: 'Inter', sans-serif;
+      overflow: hidden;
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+    }
+
+    /* Fullscreen grid overlay for calibration */
+    #calibration-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 10;
+      pointer-events: none;
+    }
+
+    .calibration-dot {
+      position: absolute;
+      width: 24px;
+      height: 24px;
+      margin-left: -12px;
+      margin-top: -12px;
+      border-radius: 50%;
+      background-color: var(--accent);
+      box-shadow: 0 0 15px rgba(var(--accent-rgb), 0.8), 0 0 30px rgba(var(--accent-rgb), 0.5);
+      z-index: 20;
+      transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      display: none;
+      pointer-events: auto;
+      cursor: pointer;
+    }
+
+    .calibration-dot::after {
+      content: '';
+      position: absolute;
+      top: -6px;
+      left: -6px;
+      right: -6px;
+      bottom: -6px;
+      border: 2px solid rgba(var(--accent-rgb), 0.4);
+      border-radius: 50%;
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(1); opacity: 1; }
+      100% { transform: scale(1.6); opacity: 0; }
+    }
+
+    /* Central UI Card */
+    .ui-container {
+      background: var(--bg-surface);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 20px;
+      padding: 32px;
+      width: 480px;
+      text-align: center;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+      z-index: 5;
+      backdrop-filter: blur(10px);
+      transition: all 0.3s ease;
+    }
+
+    .ui-container h2 {
+      font-size: 22px;
+      font-weight: 700;
+      color: #ffffff;
+      margin-bottom: 12px;
+    }
+
+    .ui-container p {
+      font-size: 14px;
+      color: var(--text-muted);
+      line-height: 1.6;
+      margin-bottom: 24px;
+    }
+
+    .camera-preview-container {
+      width: 100%;
+      height: 200px;
+      border-radius: 12px;
+      background: #11111b;
+      overflow: hidden;
+      margin-bottom: 24px;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      position: relative;
+    }
+
+    video#webcam {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1); /* Mirror view */
+    }
+
+    .btn {
+      background: linear-gradient(135deg, #f5c2e7, #cba6f7);
+      color: #11111b;
+      border: none;
+      padding: 14px 28px;
+      border-radius: 10px;
+      font-weight: 700;
+      font-size: 14px;
+      cursor: pointer;
+      box-shadow: 0 4px 15px rgba(245, 194, 231, 0.25);
+      transition: all 0.2s ease;
+      width: 100%;
+    }
+
+    .btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(245, 194, 231, 0.4);
+    }
+
+    .instruction-step {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-align: left;
+      font-size: 13px;
+      background: rgba(255,255,255,0.03);
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.03);
+    }
+
+    .instruction-step i {
+      color: var(--accent);
+      font-size: 18px;
+    }
+
+    /* Warning Overlay */
+    #warning-toast {
+      position: fixed;
+      bottom: 30px;
+      background-color: var(--red);
+      color: #11111b;
+      font-weight: 700;
+      font-size: 14px;
+      padding: 12px 24px;
+      border-radius: 8px;
+      display: none;
+      z-index: 100;
+      box-shadow: 0 10px 30px rgba(243, 139, 168, 0.3);
+      animation: slideUp 0.3s ease;
+    }
+
+    @keyframes slideUp {
+      from { transform: translateY(50px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+
+    /* Progress overlay */
+    .progress-bar-container {
+      width: 100%;
+      background: rgba(255,255,255,0.08);
+      height: 6px;
+      border-radius: 3px;
+      overflow: hidden;
+      margin-bottom: 24px;
+      display: none;
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      background: var(--accent);
+      width: 0%;
+      transition: width 0.3s ease;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Calibration grid wrapper -->
+  <div id="calibration-overlay">
+    <div id="target-dot" class="calibration-dot"></div>
+  </div>
+
+  <!-- Instruction UI Card -->
+  <div class="ui-container" id="ui-card">
+    <h2>Gaze Calibration</h2>
+    <p>Before beginning your interview, we need to calibrate the eye tracking engine to ensure accurate gaze analysis.</p>
+    
+    <div class="camera-preview-container">
+      <video id="webcam" autoplay muted playsinline></video>
+    </div>
+
+    <div style="margin-bottom: 24px;">
+      <div class="instruction-step">
+        <i class="ph ph-arrows-out"></i>
+        <span>Sit directly in front of the screen (60-70cm away).</span>
+      </div>
+      <div class="instruction-step">
+        <i class="ph ph-eye"></i>
+        <span>Stare directly at each dot as it appears and hold still.</span>
+      </div>
+      <div class="instruction-step">
+        <i class="ph ph-activity"></i>
+        <span>Blink normally; do not move your head.</span>
+      </div>
+    </div>
+
+    <div class="progress-bar-container" id="progress-container">
+      <div class="progress-bar-fill" id="progress-fill"></div>
+    </div>
+
+    <button class="btn" id="btn-start" onclick="startCalibration()">START CALIBRATION</button>
+  </div>
+
+  <div id="warning-toast"></div>
+
+  <!-- Hidden canvas for capturing frames -->
+  <canvas id="capture-canvas" style="display:none;"></canvas>
+
+  <script>
+    const webcam = document.getElementById('webcam');
+    const canvas = document.getElementById('capture-canvas');
+    const ctx = canvas.getContext('2d');
+    const btnStart = document.getElementById('btn-start');
+    const targetDot = document.getElementById('target-dot');
+    const uiCard = document.getElementById('ui-card');
+    const warningToast = document.getElementById('warning-toast');
+    const progressContainer = document.getElementById('progress-container');
+    const progressFill = document.getElementById('progress-fill');
+
+    let stream = null;
+    let calibrationPoints = [];
+    let currentPointIndex = 0;
+    
+    // Generate the 5x5 grid coordinates
+    const steps = [0.1, 0.3, 0.5, 0.7, 0.9];
+    for (let y of steps) {
+      for (let x of steps) {
+        calibrationPoints.push({ x, y });
+      }
+    }
+
+    // Shuffle calibration points randomly to prevent target predictability
+    calibrationPoints.sort(() => Math.random() - 0.5);
+
+    // Initialize camera
+    async function initCamera() {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: 640, height: 480, facingMode: 'user' },
+          audio: false
+        });
+        webcam.srcObject = stream;
+        return true;
+      } catch (err) {
+        console.error("Camera access failed:", err);
+        showWarning("Please allow camera access to perform calibration.");
+        return false;
+      }
+    }
+
+    window.onload = () => {
+      initCamera();
+    };
+
+    function showWarning(msg) {
+      warningToast.innerText = msg;
+      warningToast.style.display = 'block';
+      setTimeout(() => {
+        warningToast.style.display = 'none';
+      }, 3500);
+    }
+
+    async function startCalibration() {
+      const cameraOk = await initCamera();
+      if (!cameraOk) return;
+
+      // Hide non-essential UI items from card to keep it clean
+      document.querySelectorAll('.instruction-step').forEach(el => el.style.display = 'none');
+      webcam.style.display = 'none';
+      btnStart.style.display = 'none';
+      uiCard.style.padding = '20px';
+      uiCard.style.width = '350px';
+      
+      // Move UI card to corner so it doesn't cover calibration points
+      uiCard.style.position = 'fixed';
+      uiCard.style.bottom = '20px';
+      uiCard.style.left = '20px';
+      uiCard.style.zIndex = '50';
+      
+      progressContainer.style.display = 'block';
+      uiCard.querySelector('h2').innerText = "Calibration In Progress...";
+      uiCard.querySelector('p').innerText = "Keep your eyes focused on the glowing dot on-screen.";
+
+      // Setup canvas sizing
+      canvas.width = 640;
+      canvas.height = 480;
+
+      // Wait 1.5 seconds, then show first dot
+      setTimeout(showNextPoint, 1500);
+    }
+
+    function showNextPoint() {
+      if (currentPointIndex >= calibrationPoints.length) {
+        finishCalibration();
+        return;
+      }
+
+      // Update progress fill bar
+      const pct = (currentPointIndex / calibrationPoints.length) * 100;
+      progressFill.style.style = `width: ${pct}%`;
+      progressFill.style.width = pct + '%';
+
+      const point = calibrationPoints[currentPointIndex];
+      
+      // Translate normalized screen coordinates [0, 1] to pixel window dimensions
+      const pxX = point.x * window.innerWidth;
+      const pxY = point.y * window.innerHeight;
+
+      targetDot.style.left = pxX + 'px';
+      targetDot.style.top = pxY + 'px';
+      targetDot.style.display = 'block';
+
+      // Give candidate 1 second to look at the dot, then trigger image capture
+      setTimeout(() => {
+        captureAndUpload(point);
+      }, 1000);
+    }
+
+    async function captureAndUpload(point) {
+      // Draw camera frame to canvas
+      ctx.save();
+      // Mirror the draw back because we mirrored webcam preview
+      ctx.translate(canvas.width, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(webcam, 0, 0, canvas.width, canvas.height);
+      ctx.restore();
+
+      const base64Image = canvas.toDataURL('image/jpeg', 0.85);
+
+      try {
+        const response = await fetch('/api/calibrate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            x: point.x,
+            y: point.y,
+            image: base64Image
+          })
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+          // Success: blink dot green, and move to next coordinate
+          targetDot.style.backgroundColor = 'var(--green)';
+          targetDot.style.boxShadow = '0 0 15px rgba(166, 227, 161, 0.8)';
+          
+          setTimeout(() => {
+            targetDot.style.backgroundColor = 'var(--accent)';
+            targetDot.style.boxShadow = '0 0 15px rgba(var(--accent-rgb), 0.8)';
+            targetDot.style.display = 'none';
+            currentPointIndex++;
+            showNextPoint();
+          }, 300);
+        } else {
+          // Failed (e.g. no face detected)
+          console.warn("Calibration endpoint returned error:", data.error);
+          showWarning(data.error || "Failed to detect face. Retrying point...");
+          
+          // Flash dot red, and retry this coordinate
+          targetDot.style.backgroundColor = 'var(--red)';
+          targetDot.style.boxShadow = '0 0 15px rgba(243, 139, 168, 0.8)';
+          
+          setTimeout(() => {
+            targetDot.style.backgroundColor = 'var(--accent)';
+            targetDot.style.boxShadow = '0 0 15px rgba(var(--accent-rgb), 0.8)';
+            showNextPoint(); // Retry
+          }, 800);
+        }
+
+      } catch (err) {
+        console.error("Calibration request failed:", err);
+        showWarning("Network error occurred. Retrying point...");
+        setTimeout(showNextPoint, 1000);
+      }
+    }
+
+    function finishCalibration() {
+      targetDot.style.display = 'none';
+      progressFill.style.width = '100%';
+      
+      // Bring UI card back to center
+      uiCard.style.position = 'static';
+      uiCard.style.width = '480px';
+      uiCard.style.padding = '32px';
+      
+      uiCard.querySelector('h2').innerText = "Calibration Complete!";
+      uiCard.querySelector('h2').style.color = "var(--green)";
+      uiCard.querySelector('p').innerText = "Your eye tracking engine is fully calibrated. You may now enter the meeting.";
+
+      // Stop camera stream
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+      }
+
+      // Add a clean redirect button
+      const footerBtn = document.createElement('button');
+      footerBtn.className = 'btn';
+      footerBtn.innerText = "PROCEED TO MEETING";
+      footerBtn.style.marginTop = "20px";
+      footerBtn.onclick = () => {
+        window.location.href = '/login';
+      };
+      
+      // Remove progress bar and append redirect button
+      progressContainer.remove();
+      uiCard.appendChild(footerBtn);
+    }
+  </script>
+</body>
+</html>

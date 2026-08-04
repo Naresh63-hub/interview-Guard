@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "InterviewOS Proctoring Guard",
+  "version": "1.0.0",
+  "description": "Enforces strict proctoring guidelines during exams and interviews.",
+  "permissions": [
+    "activeTab",
+    "tabs"
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://localhost:5000/*",
+        "https://127.0.0.1:5000/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ]
+}

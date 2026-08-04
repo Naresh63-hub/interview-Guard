@@ -1,0 +1,33 @@
+{% extends 'base_dashboard.html' %}
+
+{% block head %}
+<title>Intervue — Candidate Dashboard</title>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    window.userRole = "candidate";
+</script>
+<!-- Include TensorFlow.js -->
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+<script src="/static/ui.js?v=6"></script>
+<script src="/static/webrtc.js?v=6"></script>
+<script src="/static/proctoring.js?v=6"></script>
+<script src="/static/gaze.js?v=6"></script>
+<script>
+    // Listen for events dispatched from the Chrome Extension content script
+    window.addEventListener('proctoring_violation', function (e) {
+        console.log("[Candidate Dashboard] Proctoring violation event received from extension:", e.detail);
+        if (typeof socket !== 'undefined' && socket && socket.connected) {
+            socket.emit("audit_event", {
+                meetingId: MEETING_ID,
+                title: e.detail.title,
+                message: e.detail.message,
+                confidence: "High",
+                isCritical: true
+            });
+        }
+    });
+</script>
+{% endblock %}
+

@@ -1,0 +1,396 @@
+{% extends 'base_dashboard.html' %}
+
+{% block head %}
+<title>Intervue — Host Dashboard</title>
+{% endblock %}
+
+{% block left_panel %}
+<!-- ─────────── LEFT PANEL ─────────── -->
+<aside class="panel left-panel">
+    <!-- Risk Overview -->
+    <section class="card scroll-card gaze-card priority-high">
+        <div class="card-header">
+            <h3>RISK OVERVIEW</h3>
+            <i class="ph ph-info"></i>
+        </div>
+        <div class="circular-progress-container">
+            <div class="circular-progress">
+                <svg viewBox="0 0 36 36">
+                    <path
+                        class="circle-bg"
+                        d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                    />
+                    <path
+                        class="circle"
+                        id="risk-circle"
+                        stroke-dasharray="20, 100"
+                        d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                    />
+                </svg>
+                <div class="progress-text">
+                    <span class="percentage" id="risk-percentage">0%</span>
+                    <span class="label" id="risk-label-text">Pending</span>
+                </div>
+            </div>
+        </div>
+        <ul class="stats-list">
+            <li>
+                <span><i class="ph ph-eye"></i> Vision</span>
+                <span class="value gray" id="stat-vision">Pending</span>
+            </li>
+            <li>
+                <span><i class="ph ph-waveform"></i> Speech</span>
+                <span class="value gray" id="stat-speech">Pending</span>
+            </li>
+            <li>
+                <span><i class="ph ph-user"></i> Behavior</span>
+                <span class="value gray" id="stat-behavior">Pending</span>
+            </li>
+        </ul>
+        <div class="risk-actions">
+            <button class="btn secondary" type="button">AGGREGATE RISK</button>
+            <button
+                class="btn primary"
+                type="button"
+                id="risk-level-btn"
+                style="background: var(--bg-surface)"
+            >
+                PENDING
+            </button>
+        </div>
+    </section>
+
+    <!-- Gaze Tracking -->
+    <section class="card scroll-card ai-insights-card priority-high">
+        <div class="card-header">
+            <h3>GAZE TRACKING</h3>
+            <i class="ph ph-info"></i>
+        </div>
+        <div class="gaze-visualizer">
+            <span class="side-label">L</span>
+            <div class="eye-graphic">
+                <div class="pupil" id="pupil"></div>
+            </div>
+            <span class="side-label">R</span>
+        </div>
+        <div class="attention-score">
+            <div class="score-header">
+                <span>Attention Score</span>
+                <span class="value gray" id="attention-value">0%</span>
+            </div>
+            <div class="score-bar">
+                <div class="fill" id="attention-bar" style="width: 0%"></div>
+            </div>
+        </div>
+        <ul class="stats-list">
+            <li>
+                <span>Focus</span>
+                <span class="value gray" id="focus-level">Pending</span>
+            </li>
+            <li>
+                <span>Looking Away</span>
+                <span class="value gray" id="looking-away-pct">0%</span>
+            </li>
+            <li>
+                <span>Direction</span>
+                <span class="value gray" id="gaze-direction-label">UNKNOWN</span>
+            </li>
+            <li>
+                <span>Head Pose</span>
+                <span class="value purple" id="head-pose-label">FORWARD</span>
+            </li>
+            <li>
+                <span>Faces Detected</span>
+                <span class="value white" id="face-count-label">1</span>
+            </li>
+            <li>
+                <span><i class="ph ph-waveform"></i> Voice Score</span>
+                <span class="value purple" id="voice-score-display">100%</span>
+            </li>
+            <li>
+                <span><i class="ph ph-users"></i> Speakers</span>
+                <span class="value green" id="speaker-count-left">1</span>
+            </li>
+        </ul>
+    </section>
+
+    <!-- Audio Card -->
+    <section class="card">
+        <div class="card-header">
+            <h3><i class="ph ph-waveform"></i> AUDIO ANALYSIS</h3>
+            <i class="ph ph-info"></i>
+        </div>
+        <div class="attention-score">
+            <div class="score-header">
+                <span>Voice Level</span>
+                <span class="value purple" id="voice-level-value">0%</span>
+            </div>
+            <div class="score-bar">
+                <div class="fill" id="voice-level-bar" style="width:0%;"></div>
+            </div>
+        </div>
+        <ul class="stats-list">
+            <li>
+                <span><i class="ph ph-activity"></i> Status</span>
+                <span class="value green" id="voice-status">Waiting</span>
+            </li>
+            <li>
+                <span><i class="ph ph-music-note"></i> Pitch</span>
+                <span class="value purple" id="voice-pitch">-- Hz</span>
+            </li>
+            <li>
+                <span><i class="ph ph-heartbeat"></i> Stress</span>
+                <span class="value green" id="voice-stress">Low</span>
+            </li>
+            <li>
+                <span><i class="ph ph-users"></i> Voices</span>
+                <span class="value white" id="speaker-count-audio">1</span>
+            </li>
+        </ul>
+    </section>
+</aside>
+{% endblock %}
+
+{% block alert_banner %}
+<div class="alert-banner video-alert-banner" id="top-alert-banner" style="display: none">
+    <div class="alert-icon">
+        <i class="ph-fill ph-warning"></i>
+    </div>
+    <div class="alert-content">
+        <h4 id="alert-banner-title">Alert</h4>
+        <p id="alert-banner-msg"></p>
+        <span class="confidence" id="alert-banner-conf"></span>
+    </div>
+    <div class="alert-actions">
+        <i
+            class="ph ph-x close-icon"
+            onclick="document.getElementById('top-alert-banner').style.display = 'none'"
+        ></i>
+        <button class="btn outline small" type="button" id="btn-review-alert">Review</button>
+    </div>
+</div>
+{% endblock %}
+
+{% block settings_button %}
+<button class="icon-btn" type="button" id="btn-settings">
+    <i class="ph-fill ph-gear-six"></i>
+    <span>Settings</span>
+</button>
+{% endblock %}
+
+{% block right_panel %}
+<!-- ─────────── RIGHT PANEL ─────────── -->
+<aside class="panel right-panel">
+    <!-- Interview Summary -->
+    <section class="card scroll-card interview-summary-card priority-high">
+        <div class="card-header">
+            <h3><i class="ph ph-chart-line-up"></i> INTERVIEW SUMMARY</h3>
+            <span class="badge small">LIVE</span>
+        </div>
+        <div class="summary-section">
+            <h4>Vision Tracking</h4>
+            <ul class="summary-list">
+                <li><span>Face Detected</span><strong class="gray-text" id="stat-face-detected">Analyzing...</strong></li>
+                <li><span>Looking at Camera</span><strong class="gray-text" id="stat-looking-camera">Analyzing...</strong></li>
+                <li><span>Looking Away</span><strong class="gray-text" id="stat-looking-away">Analyzing...</strong></li>
+                <li><span>Head Pose Abnormal</span><strong class="gray-text" id="stat-head-pose-abnormal">Analyzing...</strong></li>
+                <li><span>Reflections Detected</span><strong class="gray-text" id="stat-reflections-detected">Analyzing...</strong></li>
+            </ul>
+        </div>
+        <div class="summary-section">
+            <h4>Browser Activity</h4>
+            <ul class="summary-list">
+                <li><span>Tab Switches</span><strong class="gray-text" id="stat-tab-switches">Analyzing...</strong></li>
+                <li><span>Copy-Paste Ops</span><strong class="gray-text" id="stat-copy-paste">Analyzing...</strong></li>
+                <li><span>AI Tools</span><strong class="gray-text">Analyzing...</strong></li>
+                <li><span>Window Focus Lost</span><strong class="gray-text">Analyzing...</strong></li>
+            </ul>
+        </div>
+        <div class="summary-section">
+            <h4>Network Integrity</h4>
+            <ul class="summary-list">
+                <li><span>ISP &amp; Loc</span><strong class="gray-text" id="stat-network-isp">Analyzing...</strong></li>
+                <li><span>VPN / Proxy</span><strong class="gray-text" id="stat-network-vpn">Analyzing...</strong></li>
+            </ul>
+        </div>
+        <div class="summary-section summary-timeline">
+            <h4>Timeline &amp; Evidence</h4>
+            <div class="summary-events">
+                <div class="summary-event info">
+                    <span class="event-time">--:--:--</span>
+                    <div>
+                        <strong>ℹ️ INFO</strong>
+                        <p>Waiting for interview to begin...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Audit Trail -->
+    <section class="card flex-grow scroll-card audit-trail-card priority-high">
+        <div class="card-header">
+            <h3><i class="ph ph-list-plus"></i> AUDIT TRAIL</h3>
+            <span class="live-indicator"><span class="dot"></span> Live</span>
+        </div>
+        <div class="timeline" id="timeline">
+            <div class="timeline-item">
+                <div class="marker"></div>
+                <div class="content">
+                    <h5 id="session-status-title">Session Pending</h5>
+                    <p id="session-status-message">Waiting for interviewer and candidate to join</p>
+                </div>
+                <span class="time" id="start-time">--:--</span>
+            </div>
+        </div>
+        <button class="btn full-width link-btn" type="button" id="btn-view-audit">
+            <i class="ph ph-list"></i> View Full Audit Log
+            <i class="ph ph-caret-right"></i>
+        </button>
+    </section>
+</aside>
+{% endblock %}
+
+{% block extra_modals %}
+<!-- Full Audit Log Modal -->
+<div class="overlay-modal" id="audit-log-modal">
+    <div class="overlay-card" style="width: min(550px, 90vw); max-height: 70vh;">
+        <div class="panel-header" style="padding: 1.5rem; border-bottom: 1px solid var(--border-glass);">
+            <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+                <div style="font-size: 1.25rem; font-weight: 600; color: var(--text-primary);">
+                    <i class="ph-fill ph-list-plus"></i> Full Audit Log
+                </div>
+                <button
+                    class="close-btn"
+                    onclick="document.getElementById('audit-log-modal').classList.remove('open')"
+                >
+                    <i class="ph ph-x"></i>
+                </button>
+            </div>
+        </div>
+        <div style="padding: 1.5rem; overflow-y: auto; flex: 1;">
+            <div class="timeline" id="modal-full-timeline"></div>
+        </div>
+        <div class="overlay-actions" style="padding: 1rem 1.5rem; border-top: 1px solid var(--border-glass);">
+            <button
+                class="btn secondary"
+                type="button"
+                onclick="document.getElementById('audit-log-modal').classList.remove('open')"
+            >
+                Close
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Proctoring & Settings Modal -->
+<div class="overlay-modal" id="settings-modal">
+    <div class="overlay-card" style="width: min(550px, 90vw); max-height: 85vh;">
+        <div class="panel-header" style="padding: 1.5rem; border-bottom: 1px solid var(--border-glass);">
+            <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+                <div style="font-size: 1.25rem; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 0.5rem;">
+                    <i class="ph-fill ph-gear-six" style="color: var(--accent-primary);"></i> Host Settings
+                </div>
+                <button
+                    class="close-btn"
+                    type="button"
+                    style="border: none; background: transparent; cursor: pointer; color: var(--text-secondary); font-size: 1.25rem;"
+                    onclick="document.getElementById('settings-modal').classList.remove('open')"
+                >
+                    <i class="ph ph-x"></i>
+                </button>
+            </div>
+        </div>
+        <div style="padding: 1.5rem; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 1.5rem;">
+            <!-- Moderator Controls -->
+            <div>
+                <h4 style="font-size: 0.9rem; font-weight: 700; color: var(--text-primary); margin-bottom: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;">Moderator Remote Controls</h4>
+                <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+                    <button class="btn primary" id="settings-btn-mute-candidate" type="button" style="display: flex; align-items: center; gap: 0.5rem; flex: 1; min-width: 180px; justify-content: center; padding: 0.75rem 1rem;">
+                        <i class="ph-fill ph-microphone" id="settings-icon-mute-candidate"></i> <span id="settings-text-mute-candidate">Mute Candidate</span>
+                    </button>
+                    <button class="btn primary" id="settings-btn-cam-candidate" type="button" style="display: flex; align-items: center; gap: 0.5rem; flex: 1; min-width: 180px; justify-content: center; padding: 0.75rem 1rem;">
+                        <i class="ph-fill ph-video-camera" id="settings-icon-cam-candidate"></i> <span id="settings-text-cam-candidate">Kill Candidate Cam</span>
+                    </button>
+                </div>
+            </div>
+
+            <hr style="border: 0; border-top: 1px solid var(--border-glass);" />
+
+            <!-- Proctoring Sensitivity -->
+            <div>
+                <h4 style="font-size: 0.9rem; font-weight: 700; color: var(--text-primary); margin-bottom: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;">Proctoring Sensitivity</h4>
+                <div style="display: flex; flex-direction: column; gap: 1rem;">
+                    <div style="display: flex; flex-direction: column; gap: 0.35rem;">
+                        <label for="settings-gaze-sensitivity" style="font-size: 0.8rem; font-weight: 600; color: var(--text-secondary);">Gaze Tracking Sensitivity</label>
+                        <select id="settings-gaze-sensitivity" class="meeting-input" style="height: 38px; padding: 0 0.75rem; background: rgba(241, 231, 255, 0.7); border: 1px solid var(--border-glass); border-radius: 8px;">
+                            <option value="low">Low (Fewer warnings, loose boundaries)</option>
+                            <option value="medium" selected>Medium (Standard balance)</option>
+                            <option value="high">High (Strict boundaries, instant warnings)</option>
+                        </select>
+                    </div>
+                    <div style="display: flex; flex-direction: column; gap: 0.35rem;">
+                        <label for="settings-tab-switches" style="font-size: 0.8rem; font-weight: 600; color: var(--text-secondary);">Allowed Tab Switches before Alert</label>
+                        <input type="number" id="settings-tab-switches" class="meeting-input" min="1" max="50" value="3" style="height: 38px; padding: 0 0.75rem; background: rgba(241, 231, 255, 0.7); border: 1px solid var(--border-glass); border-radius: 8px;">
+                    </div>
+                </div>
+            </div>
+
+            <hr style="border: 0; border-top: 1px solid var(--border-glass);" />
+
+            <!-- Toggle Proctoring Checks -->
+            <div>
+                <h4 style="font-size: 0.9rem; font-weight: 700; color: var(--text-primary); margin-bottom: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;">Active Proctoring Guards</h4>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+                    <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; cursor: pointer; color: var(--text-secondary);">
+                        <input type="checkbox" id="settings-check-gaze" checked style="accent-color: var(--accent-primary); width: 16px; height: 16px;"> Gaze Tracking Checks
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; cursor: pointer; color: var(--text-secondary);">
+                        <input type="checkbox" id="settings-check-audio" checked style="accent-color: var(--accent-primary); width: 16px; height: 16px;"> Audio Anomaly Checks
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; cursor: pointer; color: var(--text-secondary);">
+                        <input type="checkbox" id="settings-check-vm" checked style="accent-color: var(--accent-primary); width: 16px; height: 16px;"> VM Environment Check
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; cursor: pointer; color: var(--text-secondary);">
+                        <input type="checkbox" id="settings-check-monitor" checked style="accent-color: var(--accent-primary); width: 16px; height: 16px;"> Dual-Monitor Check
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; cursor: pointer; color: var(--text-secondary);">
+                        <input type="checkbox" id="settings-check-devtools" checked style="accent-color: var(--accent-primary); width: 16px; height: 16px;"> DevTools Hacker Guard
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; cursor: pointer; color: var(--text-secondary);">
+                        <input type="checkbox" id="settings-check-clipboard" checked style="accent-color: var(--accent-primary); width: 16px; height: 16px;"> Copy/Paste Abuse Guard
+                    </label>
+                </div>
+            </div>
+        </div>
+        <div class="overlay-actions" style="padding: 1.5rem; border-top: 1px solid var(--border-glass); display: flex; gap: 0.75rem; justify-content: flex-end;">
+            <button
+                class="btn secondary"
+                type="button"
+                style="padding: 0.6rem 1.2rem; border-radius: 8px;"
+                onclick="document.getElementById('settings-modal').classList.remove('open')"
+            >
+                Cancel
+            </button>
+            <button
+                class="btn primary"
+                type="button"
+                id="settings-btn-save"
+                style="padding: 0.6rem 1.2rem; border-radius: 8px; background: var(--gradient-purple); color: white; border: none; font-weight: 600;"
+            >
+                Save Settings
+            </button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    window.userRole = "interviewer";
+</script>
+<script src="/static/ui.js?v=6"></script>
+<script src="/static/webrtc.js?v=6"></script>
+<script src="/static/proctoring.js?v=6"></script>
+<script src="/static/gaze.js?v=6"></script>
+{% endblock %}

@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Intervue — Dashboard</title>
+        <link rel="icon" href="data:,">
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link
+            href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
+            rel="stylesheet"
+        />
+        <script src="https://unpkg.com/@phosphor-icons/web"></script>
+        <link rel="stylesheet" href="/static/styles.css" />
+        {% block head %}{% endblock %}
+    </head>
+
+    <body>
+        <script>
+            (function() {
+                const theme = localStorage.getItem("theme") || "light";
+                if (theme === "dark") {
+                    document.body.classList.add("theme-dark");
+                } else {
+                    document.body.classList.add("theme-light");
+                }
+            })();
+        </script>
+        <div class="app-container">
+            <!-- ═══════════════════ TOP BAR ═══════════════════ -->
+            <header class="top-bar">
+                <div class="logo">
+                    <i class="ph-fill ph-eye"></i>
+                    <span>Intervue</span>
+                </div>
+
+                <div class="status-indicators">
+                    <div class="status-badge green" id="badge-shield">
+                        <i class="ph ph-shield-check"></i>
+                        <span id="badge-shield-label">Shield: ON</span>
+                    </div>
+                    <div class="status-badge" id="badge-screen">
+                        <i class="ph ph-screencast" id="badge-screen-icon"></i>
+                        <span id="badge-screen-label">Screen: Monitoring</span>
+                    </div>
+                    <div class="status-badge" id="badge-screen-share">
+                        <i class="ph ph-monitor-arrow-up" id="badge-share-icon"></i>
+                        <span id="badge-share-label">Share Screen</span>
+                    </div>
+                    <div class="status-badge" id="badge-focus">
+                        <i class="ph ph-eye" id="badge-focus-icon"></i>
+                        <span id="badge-focus-label">Focus: Active</span>
+                    </div>
+                    <div class="status-badge" id="badge-ext">
+                        <i class="ph ph-prohibit"></i>
+                        <span id="badge-ext-label">Extensions: OK</span>
+                    </div>
+                </div>
+
+                <div class="session-info">
+                    <div class="session-detail">
+                        <span class="label">SESSION ID</span>
+                        <span class="value" id="top-meeting-id">{{ meeting_id }}</span>
+                        <button class="btn small outline" type="button" onclick="copyMeetingInvite()" style="margin-left: 12px; padding: 4px 8px; font-size: 0.75rem;">
+                            <i class="ph-fill ph-user-plus" style="margin-right: 4px;"></i> Invite
+                        </button>
+                    </div>
+                    <div class="session-detail">
+                        <span class="label">TIME ELAPSED</span>
+                        <span class="value" id="timer-display">WAITING</span>
+                    </div>
+                    <!-- Theme Toggle -->
+                    <button class="btn small outline" id="btn-theme-toggle" type="button" onclick="toggleTheme()" style="margin-left: 12px; margin-right: 12px; padding: 4px 8px; font-size: 0.75rem; display: flex; align-items: center; gap: 4px;">
+                        <i class="ph ph-moon" id="theme-toggle-icon"></i> <span id="theme-toggle-text">Dark Mode</span>
+                    </button>
+                    <div class="user-profile" id="user-profile-btn">
+                        <img
+                            id="user-avatar"
+                            src="https://ui-avatars.com/api/?name=User&background=6C4EB1&color=fff"
+                            alt="User"
+                        />
+                        <div class="details" style="display: flex; flex-direction: column; align-items: flex-start; padding: 0 0.4rem;">
+                            <span id="header-user-role" style="font-size: 0.65rem; font-weight: 700; color: var(--text-secondary); letter-spacing: 0.05em; text-transform: uppercase;">CANDIDATE</span>
+                            <span id="header-user-name" style="font-size: 0.85rem; font-weight: 600;">User</span>
+                        </div>
+                        <i class="ph-fill ph-caret-down"></i>
+                    </div>
+                </div>
+            </header>
+
+            <!-- ═══════════════════ MAIN GRID ═══════════════════ -->
+            <main class="dashboard-grid">
+                {% block left_panel %}{% endblock %}
+
+                <!-- ─────────── CENTER PANEL ─────────── -->
+                <section class="center-panel">
+                    <div class="main-video-container">
+                        <div class="live-badge">
+                            <span class="dot"></span> LIVE
+                        </div>
+                        {% block alert_banner %}{% endblock %}
+                        
+                        <!-- Gaze alert overlay -->
+                        <div
+                            id="alert"
+                            class="gaze-alert"
+                            role="status"
+                            aria-live="polite"
+                        ></div>
+
+                        <video
+                            id="main-video"
+                            class="main-video"
+                            autoplay
+                            muted
+                            playsinline
+                        ></video>
+
+                        <!-- Floating Picture-in-Picture for Local Video -->
+                        <div class="pip-video-container" id="pip-container">
+                            <span>{{ room_host[:1] if room_host else 'H' }}</span>
+                            <video id="local-video" autoplay muted playsinline></video>
+                        </div>
+
+                        <div class="candidate-name-overlay" style="display: none;">
+                            <h2 id="candidate-display-name">
+                                Interview Session
+                            </h2>
+                            <div class="subtitle">
+                                <span id="candidate-display-role">Connecting…</span>
+                            </div>
+                        </div>
+
+                        <!-- Audio Activity Visualizer -->
+                        <div class="audio-bars" id="audio-bars" style="position: absolute; bottom: 20px; left: 20px; z-index: 50; display: flex;">
+                            <span></span><span></span><span></span>
+                        </div>
+
+                        <!-- Live Eye Analysis popup -->
+                        <div class="eye-analysis-popup" id="eye-analysis-popup">
+                            <div class="popup-header">
+                                <span class="title"
+                                    ><span class="dot purple-dot"></span> LIVE
+                                    EYE ANALYSIS</span
+                                >
+                                <i
+                                    class="ph ph-x"
+                                    style="cursor: pointer"
+                                    onclick="
+                                        document.getElementById(
+                                            'eye-analysis-popup',
+                                        ).style.display = 'none'
+                                    "
+                                ></i>
+                            </div>
+                            <div class="popup-content">
+                                <img
+                                    id="annotated-gaze-feed"
+                                    src=""
+                                    alt="Eye Analysis"
+                                />
+                                <div class="crosshair"></div>
+                            </div>
+                        </div>
+
+                        <!-- Bottom Controls -->
+                        <div class="bottom-controls video-toolbar-overlay">
+                            <div class="meeting-toolbar-cluster">
+                                <div class="control-buttons">
+                                    <button
+                                        class="icon-btn"
+                                        id="btn-mute"
+                                        type="button"
+                                    >
+                                        <i class="ph-fill ph-microphone" id="icon-mute"></i>
+                                        <span id="text-mute">Mute</span>
+                                    </button>
+                                    <button
+                                        class="icon-btn"
+                                        id="btn-video"
+                                        type="button"
+                                    >
+                                        <i class="ph-fill ph-video-camera" id="icon-video"></i>
+                                        <span id="text-video">Stop Cam</span>
+                                    </button>
+                                    <button
+                                        class="icon-btn"
+                                        type="button"
+                                        id="btn-screen-share"
+                                    >
+                                        <i class="ph-fill ph-monitor-arrow-up"></i>
+                                        <span id="text-share">Share</span>
+                                    </button>
+                                    <button
+                                        class="icon-btn primary large"
+                                        type="button"
+                                        id="btn-shield"
+                                    >
+                                        <i class="ph-fill ph-shield-check"></i>
+                                        <span>Shield</span>
+                                    </button>
+                                    <button
+                                        class="icon-btn has-badge"
+                                        type="button"
+                                        id="btn-chat"
+                                    >
+                                        <span class="badge" id="chat-badge" style="display: none;">0</span>
+                                        <i class="ph-fill ph-chat-circle-text"></i>
+                                        <span>Chat</span>
+                                    </button>
+                                    <button
+                                        class="icon-btn"
+                                        type="button"
+                                        id="btn-notes"
+                                    >
+                                        <i class="ph-fill ph-file-text"></i>
+                                        <span>Notes</span>
+                                    </button>
+                                    {% block settings_button %}{% endblock %}
+                                </div>
+
+                                <div class="bottom-actions">
+                                    <button
+                                        class="btn primary end-interview-btn"
+                                        type="button"
+                                        id="btn-end-interview"
+                                    >
+                                        <i class="ph-fill ph-phone-disconnect"></i>
+                                        End Interview
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                {% block right_panel %}{% endblock %}
+            </main>
+        </div>
+
+        <aside class="side-drawer" id="chat-panel" aria-hidden="true">
+            <div class="drawer-header">
+                <div>
+                    <h3>Session Chat</h3>
+                    <p>Share quick interview notes and updates.</p>
+                </div>
+                <button class="drawer-close" type="button" id="btn-close-chat">
+                    <i class="ph ph-x"></i>
+                </button>
+            </div>
+            <div class="drawer-body" id="chat-messages">
+                <div class="chat-message system">
+                    <strong>System</strong>
+                    <p>Session chat is ready.</p>
+                </div>
+            </div>
+            <form class="drawer-footer" id="chat-form">
+                <input
+                    id="chat-input"
+                    class="meeting-input"
+                    type="text"
+                    placeholder="Type a message"
+                />
+                <button class="btn primary small" type="submit">Send</button>
+                <button class="btn secondary small" type="button" id="btn-analyze-chat" title="Analyze Chat"><i class="ph ph-magic-wand"></i></button>
+            </form>
+        </aside>
+
+        <aside class="side-drawer" id="notes-modal" aria-hidden="true">
+            <div class="drawer-header">
+                <div>
+                    <h3>Session Notes</h3>
+                    <p>Edit and save notes for this interview session.</p>
+                </div>
+                <button
+                    class="drawer-close"
+                    type="button"
+                    id="btn-close-notes"
+                >
+                    <i class="ph ph-x"></i>
+                </button>
+            </div>
+            <div class="drawer-body" style="display: flex; flex-direction: column; height: 100%;">
+                <textarea
+                    id="notes-editor"
+                    class="meeting-textarea notes-editor"
+                    style="flex-grow: 1; margin-bottom: 1rem; height: auto;"
+                    placeholder="Session notes will appear here"
+                ></textarea>
+                <div class="overlay-actions" style="margin-top: auto; padding-bottom: 1rem; display: flex; gap: 0.5rem; justify-content: flex-end;">
+                    <button
+                        class="btn secondary"
+                        type="button"
+                        id="btn-copy-notes"
+                    >
+                        Copy
+                    </button>
+                    <button
+                        class="btn primary"
+                        type="button"
+                        id="btn-save-notes"
+                    >
+                        Save
+                    </button>
+                </div>
+            </div>
+        </aside>
+
+        <div
+            id="logout-modal"
+            style="
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0, 0, 0, 0.7);
+                z-index: 999;
+                align-items: center;
+                justify-content: center;
+            "
+        >
+            <div
+                style="
+                    background: #2a2541;
+                    border-radius: 16px;
+                    padding: 2rem;
+                    max-width: 380px;
+                    width: 90%;
+                    text-align: center;
+                    border: 1px solid rgba(255, 255, 255, 0.1);
+                "
+            >
+                <h3 style="margin-bottom: 1rem">End Interview?</h3>
+                <p style="color: #a7a5b4; margin-bottom: 1.5rem">
+                    This will end the current session and return to login.
+                </p>
+                <div style="display: flex; gap: 1rem; justify-content: center">
+                    <button
+                        class="btn secondary"
+                        type="button"
+                        onclick="
+                            document.getElementById(
+                                'logout-modal',
+                            ).style.display = 'none'
+                        "
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        class="btn primary"
+                        type="button"
+                        onclick="endInterview()"
+                    >
+                        End Session
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        {% block extra_modals %}{% endblock %}
+
+        <script>
+            window.MEETING_ID = "{{ meeting_id }}";
+        </script>
+        <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+        {% block scripts %}{% endblock %}
+    </body>
+</html>

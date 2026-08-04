@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body {
+      width: 280px;
+      margin: 0;
+      padding: 16px;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: linear-gradient(135deg, #1e1e2e, #11111b);
+      color: #cdd6f4;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+    .icon {
+      width: 32px;
+      height: 32px;
+      background: #f38ba8;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      color: #11111b;
+      font-size: 18px;
+      margin-right: 10px;
+      box-shadow: 0 4px 10px rgba(243, 139, 168, 0.3);
+    }
+    .title {
+      font-size: 16px;
+      font-weight: 700;
+      color: #ffffff;
+      letter-spacing: 0.5px;
+    }
+    .status-card {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 12px;
+      padding: 12px;
+      margin-bottom: 14px;
+      backdrop-filter: blur(5px);
+    }
+    .status-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .status-row:last-child {
+      margin-bottom: 0;
+    }
+    .label {
+      font-size: 12px;
+      color: #a6adc8;
+    }
+    .value {
+      font-size: 12px;
+      font-weight: 600;
+      color: #a6e3a1;
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 20px;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    .badge-active {
+      background: rgba(166, 227, 161, 0.15);
+      color: #a6e3a1;
+      border: 1px solid rgba(166, 227, 161, 0.3);
+    }
+    .footer {
+      text-align: center;
+      font-size: 10px;
+      color: #6c7086;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      padding-top: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="icon">G</div>
+    <div class="title">OS Guard</div>
+  </div>
+  <div class="status-card">
+    <div class="status-row">
+      <span class="label">Proctor Status</span>
+      <span class="badge badge-active">Active</span>
+    </div>
+    <div class="status-row">
+      <span class="label">Page Restrictions</span>
+      <span class="value" style="color: #a6e3a1;">Locked</span>
+    </div>
+    <div class="status-row">
+      <span class="label">Focus Monitor</span>
+      <span class="value" style="color: #89b4fa;">Running</span>
+    </div>
+  </div>
+  <div class="footer">
+    InterviewOS Proctoring Guard v1.0.0
+  </div>
+</body>
+</html>
