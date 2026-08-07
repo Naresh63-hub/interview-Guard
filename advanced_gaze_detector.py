@@ -170,7 +170,7 @@ class AdvancedGazeDetector:
         autoencoder_path = os.path.join("trained_models", "head_pose_autoencoder.pt")
         if os.path.exists(autoencoder_path):
             try:
-                checkpoint = torch.load(autoencoder_path, map_location="cpu")
+                checkpoint = torch.load(autoencoder_path, map_location="cpu", weights_only=False)
                 input_dim = checkpoint["input_dim"]
                 self.pose_mean = checkpoint["mean"]
                 self.pose_std = checkpoint["std"]
