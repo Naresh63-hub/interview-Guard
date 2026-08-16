@@ -62,17 +62,26 @@
                 }
 
                 try {
-                    // Check if room exists
-                    const response = await fetch(`${APP_ORIGIN}/api/room/${meetingId}`);
+                    // Verify the room exists and establish the candidate's
+                    // verified session for this meeting.
+                    const response = await fetch(`${APP_ORIGIN}/api/candidate/join`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            meetingId: meetingId,
+                            displayName: candidateName,
+                        }),
+                    });
+                    const data = await response.json().catch(() => ({}));
                     if (!response.ok) {
-                        alert("Room not found. Please check the Meeting ID.");
+                        alert(data.error || "Could not join the meeting.");
                         return;
                     }
                     
                     localStorage.setItem("role", "candidate");
                     localStorage.setItem("displayName", candidateName);
                     
-                    window.location.href = `${APP_ORIGIN}/candidate_dashboard/${meetingId}`;
+                    window.location.href = `${APP_ORIGIN}/candidate_dashboard/${data.meetingId}`;
                 } catch (e) {
                     alert("Could not connect to verify the meeting.");
                 }

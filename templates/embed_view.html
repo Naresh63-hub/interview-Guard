@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Interview Proctoring</title>
+    <link rel="icon" href="data:,">
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
+        rel="stylesheet"
+    />
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <style>
+        :root {
+            --primary-color: {{ branding.primaryColor or '#6C4EB1' }};
+            --bg-color: {{ '#1a1a2e' if theme == 'dark' else '#f5f5f5' }};
+            --text-color: {{ '#ffffff' if theme == 'dark' else '#1a1a2e' }};
+            --card-bg: {{ '#16213e' if theme == 'dark' else '#ffffff' }};
+            --border-color: {{ '#2a2a4a' if theme == 'dark' else '#e0e0e0' }};
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', system-ui, sans-serif;
+            background: var(--bg-color);
+            color: var(--text-color);
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .embed-header {
+            background: var(--card-bg);
+            border-bottom: 1px solid var(--border-color);
+            padding: 12px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            min-height: 60px;
+        }
+
+        .branding {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .branding-logo {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            background: var(--primary-color);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: 700;
+            font-size: 14px;
+        }
+
+        .branding-name {
+            font-weight: 600;
+            font-size: 16px;
+        }
+
+        .session-info {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            font-size: 14px;
+        }
+
+        .session-info span {
+            color: var(--primary-color);
+            font-weight: 500;
+        }
+
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            gap: 20px;
+            overflow-y: auto;
+        }
+
+        .video-container {
+            position: relative;
+            width: 100%;
+            background: black;
+            border-radius: 12px;
+            overflow: hidden;
+            aspect-ratio: 16/9;
+        }
+
+        .video-container video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .status-overlay {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #22c55e;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+        }
+
+        .stat-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 16px;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: var(--text-color);
+            opacity: 0.7;
+            margin-bottom: 8px;
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: 600;
+            color: var(--primary-color);
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .loading-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: var(--text-color);
+            opacity: 0.7;
+        }
+
+        .loading-spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid var(--border-color);
+            border-top-color: var(--primary-color);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 16px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    {% if show_header %}
+    <header class="embed-header">
+        <div class="branding">
+            {% if branding.logo %}
+            <img src="{{ branding.logo }}" alt="Logo" class="branding-logo" style="object-fit: contain;">
+            {% else %}
+            <div class="branding-logo">{{ branding.companyName[:1] if branding.companyName else 'I' }}</div>
+            {% endif %}
+            <div class="branding-name">{{ branding.companyName or 'Interview Proctoring' }}</div>
+        </div>
+        <div class="session-info">
+            <div>Session: <span>{{ meeting_id }}</span></div>
+            <div id="connection-status">Connecting...</div>
+        </div>
+    </header>
+    {% endif %}
+
+    <div class="main-content">
+        <div class="video-container">
+            <div id="loading-state" class="loading-state">
+                <div class="loading-spinner"></div>
+                <div>Connecting to proctoring session...</div>
+            </div>
+            <video id="main-video" autoplay muted playsinline class="hidden"></video>
+            <div id="status-overlay" class="status-overlay hidden">
+                <div class="status-dot"></div>
+                <span id="status-text">Live</span>
+            </div>
+        </div>
+
+        {% if show_stats %}
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-label">Face Detection</div>
+                <div class="stat-value" id="stat-face">Waiting</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Gaze Direction</div>
+                <div class="stat-value" id="stat-gaze">--</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Confidence</div>
+                <div class="stat-value" id="stat-confidence">--%</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Session Time</div>
+                <div class="stat-value" id="stat-time">00:00</div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <script>
+        // Embed-specific configuration
+        window.MEETING_ID = '{{ meeting_id }}';
+        window.PARTNER_ID = '{{ partner_id }}';
+        window.IS_EMBED = true;
+        window.THEME = '{{ theme }}';
+        
+        // Embed-specific role - read-only viewer
+        window.userRole = 'embed_viewer';
+        
+        // Configuration from server
+        window.EMBED_CONFIG = {
+            showHeader: {{ 'true' if show_header else 'false' }},
+            showControls: {{ 'true' if show_controls else 'false' }},
+            showStats: {{ 'true' if show_stats else 'false' }},
+            features: {{ features | tojson if features else '{}' }},
+            branding: {{ branding | tojson if branding else '{}' }}
+        };
+
+        // Notify parent window of embed initialization
+        if (window.parent !== window) {
+            window.parent.postMessage({
+                type: 'intervue_embed_event',
+                event: 'embed_loaded',
+                payload: {
+                    meetingId: window.MEETING_ID,
+                    partnerId: window.PARTNER_ID,
+                    timestamp: Date.now()
+                }
+            }, '*');
+        }
+
+        // Listen for heartbeat from parent
+        window.addEventListener('message', (event) => {
+            if (event.data.type === 'intervue_heartbeat') {
+                // Respond with heartbeat acknowledgment
+                if (event.source) {
+                    event.source.postMessage({
+                        type: 'intervue_heartbeat_ack',
+                        timestamp: Date.now()
+                    }, '*');
+                }
+            }
+        });
+
+        // Simulate connection for demo (in production, this would connect to actual Socket.IO)
+        setTimeout(() => {
+            document.getElementById('loading-state').classList.add('hidden');
+            document.getElementById('main-video').classList.remove('hidden');
+            document.getElementById('status-overlay').classList.remove('hidden');
+            document.getElementById('connection-status').textContent = 'Connected';
+            
+            // In production, initialize actual Socket.IO connection here
+            console.log('[Embed] Ready to connect to Socket.IO for meeting:', window.MEETING_ID);
+        }, 2000);
+    </script>
+</body>
+</html>

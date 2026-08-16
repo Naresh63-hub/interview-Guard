@@ -101,7 +101,11 @@
             </li>
             <li>
                 <span>Faces Detected</span>
-                <span class="value white" id="face-count-label">1</span>
+                <span class="value white" id="face-count-label">0</span>
+            </li>
+            <li>
+                <span>Face Confidence</span>
+                <span class="value green" id="face-confidence-label">0%</span>
             </li>
             <li>
                 <span><i class="ph ph-waveform"></i> Voice Score</span>
@@ -389,8 +393,11 @@
 <script>
     window.userRole = "interviewer";
 </script>
-<script src="/static/ui.js?v=6"></script>
-<script src="/static/webrtc.js?v=6"></script>
-<script src="/static/proctoring.js?v=6"></script>
-<script src="/static/gaze.js?v=6"></script>
+<script src="/static/polyfills.js?v=12"></script>
+<script src="/static/security.js?v=12"></script>
+<script src="/static/privacy.js?v=12"></script>
+<script src="/static/ui.js?v=12"></script>
+<script src="/static/webrtc.js?v=12"></script>
+<script src="/static/proctoring.js?v=12"></script>
+<script src="/static/gaze.js?v=12"></script>
 {% endblock %}

@@ -115,9 +115,10 @@
                             autoplay
                             muted
                             playsinline
+                            style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);"
                         ></video>
 
-                        <!-- Floating Picture-in-Picture for Local Video -->
+                        <!-- Floating Picture-in-Picture for Local Video (Host only) -->
                         <div class="pip-video-container" id="pip-container">
                             <span>{{ room_host[:1] if room_host else 'H' }}</span>
                             <video id="local-video" autoplay muted playsinline></video>

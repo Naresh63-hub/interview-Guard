@@ -10,6 +10,35 @@ import time
 import numpy as np
 from collections import deque
 
+# ─── Sustained-anomaly persistence ────────────────────────────────────────────
+# A single-chunk spike (a cough, a door slam, a moment of overlapping speech, a
+# one-off lip-sync mismatch) is TRANSIENT and must not flag the candidate. A
+# signal only becomes suspicious after it persists across several consecutive
+# chunks spanning at least _SUSTAINED_MIN_DURATION_S.
+_SUSTAINED_CHUNKS = 3            # consecutive chunks required
+_SUSTAINED_MIN_DURATION_S = 1.0  # …and spanning at least this long
+
+_signal_streaks = {"multi_speaker": 0, "lip_mismatch": 0}
+_anomaly_since = {}
+
+
+def _update_sustained(component: str, active: bool, now: float) -> bool:
+    """Return True only when `active` has persisted across consecutive chunks.
+
+    Any inactive chunk resets the component's streak, so isolated spikes are
+    always ignored.
+    """
+    if active:
+        _signal_streaks[component] += 1
+        if _signal_streaks[component] == 1:
+            _anomaly_since[component] = now
+        return (
+            _signal_streaks[component] >= _SUSTAINED_CHUNKS
+            and (now - _anomaly_since[component]) >= _SUSTAINED_MIN_DURATION_S
+        )
+    _signal_streaks[component] = 0
+    return False
+
 # ─── State ───────────────────────────────────────────────────────────────────
 audio_state = {
     "isVoiceActive":      False,
@@ -17,12 +46,10 @@ audio_state = {
     "lipSyncMismatch":    False,
     "voiceScore":         100,
     "suspiciousAudio":    False,
+    "confidence":         95,
     "noiseLevel":         "Low",
     "timestamp":          time.time(),
 }
-
-# Rolling buffer
-voice_events = deque(maxlen=50)    # timestamps of voice activity
 
 # ─── Numpy VAD Heuristic ─────────────────────────────────────────────────────
 def analyze_vad(pcm_bytes: bytes, sample_rate: int = 16000) -> bool:
@@ -118,12 +145,6 @@ def process_audio_chunk(
     is_voice      = analyze_vad(pcm_bytes, sample_rate)
     now           = time.time()
 
-    if is_voice:
-        voice_events.append(now)
-
-    # Voice activity in last 10 seconds
-    recent_voice  = sum(1 for t in voice_events if now - t <= 10)
-
     # 2. Speaker count
     speaker_count = estimate_speaker_count(audio_np, sample_rate)
 
@@ -133,20 +154,33 @@ def process_audio_chunk(
     # 4. Noise level
     noise_level   = classify_noise(audio_np)
 
-    # Suspicious if: multiple speakers OR lip mismatch OR voice while muted
-    suspicious = (
-        speaker_count > 1 or
-        lip_mismatch      or
-        (is_voice and recent_voice > 20)   # constant background voice
-    )
+    # Suspicious ONLY if the anomaly is SUSTAINED: multiple speakers or a lip
+    # mismatch persisting across consecutive chunks (>= 1s). A single-chunk
+    # spike — a cough, a second voice for a moment, a one-off lip mismatch —
+    # is transient and must NOT flag the candidate. Constant voice is normal
+    # during an interview and never counts on its own.
+    sustained_multi = _update_sustained("multi_speaker", speaker_count > 1, now)
+    sustained_lip = _update_sustained("lip_mismatch", lip_mismatch, now)
+    suspicious = sustained_multi or sustained_lip
 
-    # Voice score: decreases with suspicious events
+    # Voice score: decreases only with SUSTAINED suspicious signals
     voice_score = max(0, min(100,
         100
-        - (30 if speaker_count > 1 else 0)
-        - (20 if lip_mismatch else 0)
-        - (min(50, recent_voice * 2))
+        - (30 if sustained_multi else 0)
+        - (20 if sustained_lip else 0)
     ))
+
+    # Confidence in the verdict: a SUSTAINED anomaly (multi-speaker or lip
+    # mismatch persisting across chunks) is high-confidence; a clean chunk is
+    # trusted as normal. The fusion layer uses this to weight the audio signal.
+    confidence = 70 if suspicious else (95 if not is_voice else 85)
+
+    # Coerce numpy scalars to native Python types: analyze_vad returns
+    # np.bool_ which Flask's jsonify cannot serialize (500 on /analyze-audio).
+    is_voice = bool(is_voice)
+    lip_mismatch = bool(lip_mismatch)
+    suspicious = bool(suspicious)
+    speaker_count = int(speaker_count)
 
     audio_state.update({
         "isVoiceActive":   is_voice,
@@ -154,6 +188,7 @@ def process_audio_chunk(
         "lipSyncMismatch": lip_mismatch,
         "voiceScore":      voice_score,
         "suspiciousAudio": suspicious,
+        "confidence":      confidence,
         "noiseLevel":      noise_level,
         "timestamp":       now,
     })

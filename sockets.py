@@ -4,10 +4,11 @@ from flask_socketio import join_room as sio_join
 from flask_socketio import leave_room as sio_leave
 from flask_socketio import emit
 import state
+from database import db
 
 def register_sockets(socketio):
     def _participant_role(meeting_id):
-        room = state.meeting_rooms.get((meeting_id or "").upper())
+        room = state.get_meeting_room((meeting_id or "").upper())
         if not room:
             return None
 
@@ -24,7 +25,7 @@ def register_sockets(socketio):
         meeting_id = (data.get("meetingId") or "").upper()
         user_name = (data.get("userName") or "User").strip()
         role = (data.get("role") or "participant").strip()
-        room = state.meeting_rooms.get(meeting_id)
+        room = state.get_meeting_room(meeting_id)
         if not room:
             emit("error", {"message": "Room not found"})
             return
@@ -53,6 +54,10 @@ def register_sockets(socketio):
                     "joinedAt": time.time(),
                 }
             )
+            
+            # Add participant to MongoDB for persistence
+            user_id = f"{role}_{user_name}_{meeting_id}"
+            state.add_participant(meeting_id, user_id, user_name, role, request.sid)
         # Initialize room settings if they do not exist yet
         if "proctoringSettings" not in room:
             room["proctoringSettings"] = {
@@ -93,6 +98,22 @@ def register_sockets(socketio):
                     for p in room["participants"]
                 ],
             },
+            to=meeting_id,
+        )
+        
+        # Emit session status update to all participants when someone joins
+        participant_count = len(room["participants"])
+        both_present = any(p["role"] == "interviewer" for p in room["participants"]) and \
+                       any(p["role"] == "candidate" for p in room["participants"])
+        
+        emit(
+            "session_status",
+            {
+                "bothPresent": both_present,
+                "participantCount": participant_count,
+                "timestamp": time.time(),
+            },
+            to=meeting_id,
         )
 
     @socketio.on("offer")
@@ -122,7 +143,7 @@ def register_sockets(socketio):
     @socketio.on("leave_meeting")
     def on_leave_meeting(data):
         meeting_id = (data.get("meetingId") or "").upper()
-        room = state.meeting_rooms.get(meeting_id)
+        room = state.get_meeting_room(meeting_id)
         if room:
             room["participants"] = [
                 p for p in room["participants"] if p["socketId"] != request.sid
@@ -177,7 +198,7 @@ def register_sockets(socketio):
     @socketio.on("settings_update")
     def on_settings_update(data):
         meeting_id = (data.get("meetingId") or "").upper()
-        room = state.meeting_rooms.get(meeting_id)
+        room = state.get_meeting_room(meeting_id)
         if room and "settings" in data:
             room["proctoringSettings"] = data["settings"]
         emit("settings_update", data, to=meeting_id, skip_sid=request.sid)
@@ -211,7 +232,7 @@ def register_sockets(socketio):
         meeting_id = (data.get("meetingId") or "").upper()
         if not _is_candidate_socket(meeting_id):
             return
-        room = state.meeting_rooms.get(meeting_id)
+        room = state.get_meeting_room(meeting_id)
         if room:
             room["networkStats"] = {
                 "isp": data.get("isp"),

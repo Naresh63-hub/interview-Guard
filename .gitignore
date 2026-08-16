@@ -8,3 +8,11 @@ __pycache__/
 ssl.crt
 ssl.key
 *.log
+.aider*
+.reconstructed_*.txt
+.render.yaml
+requirements-training.txt
+embed-demo.html
+test_*.py
+.freebuff/
+.venv_old/

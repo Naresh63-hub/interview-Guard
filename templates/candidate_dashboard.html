@@ -2,6 +2,87 @@
 
 {% block head %}
 <title>Intervue — Candidate Dashboard</title>
+<style>
+    /* Hide gaze alert overlay on candidate page */
+    #alert {
+        display: none !important;
+    }
+    
+    /* Hide PiP for candidates - they use main video area */
+    #pip-container {
+        display: none !important;
+    }
+    
+    /* Settings notification for candidate */
+    .settings-notification {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: rgba(108, 78, 177, 0.9);
+        color: white;
+        padding: 12px 20px;
+        border-radius: 8px;
+        z-index: 1000;
+        display: none;
+        animation: slideIn 0.3s ease-out;
+    }
+    
+    @keyframes slideIn {
+        from {
+            transform: translateX(100%);
+            opacity: 0;
+        }
+        to {
+            transform: translateX(0);
+            opacity: 1;
+        }
+    }
+    
+    @keyframes slideOut {
+        from {
+            transform: translateX(0);
+            opacity: 1;
+        }
+        to {
+            transform: translateX(100%);
+            opacity: 0;
+        }
+    }
+    
+    .settings-notification.show {
+        display: block;
+    }
+    
+    /* Remote control feedback */
+    .remote-control-feedback {
+        position: fixed;
+        bottom: 100px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(239, 68, 68, 0.9);
+        color: white;
+        padding: 10px 20px;
+        border-radius: 8px;
+        z-index: 1000;
+        display: none;
+        animation: fadeInOut 2s ease-in-out;
+    }
+    
+    @keyframes fadeInOut {
+        0% { opacity: 0; transform: translateX(-50%) translateY(10px); }
+        20% { opacity: 1; transform: translateX(-50%) translateY(0); }
+        80% { opacity: 1; transform: translateX(-50%) translateY(0); }
+        100% { opacity: 0; transform: translateX(-50%) translateY(-10px); }
+    }
+</style>
+{% endblock %}
+
+{% block settings_button %}
+<!-- Candidates don't get settings button - they receive settings from host -->
+{% endblock %}
+
+{% block extra_modals %}
+<!-- Candidates don't get settings modal - host controls settings -->
 {% endblock %}
 
 {% block scripts %}
@@ -10,10 +91,13 @@
 </script>
 <!-- Include TensorFlow.js -->
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
-<script src="/static/ui.js?v=6"></script>
-<script src="/static/webrtc.js?v=6"></script>
-<script src="/static/proctoring.js?v=6"></script>
-<script src="/static/gaze.js?v=6"></script>
+<script src="/static/polyfills.js?v=12"></script>
+<script src="/static/security.js?v=12"></script>
+<script src="/static/privacy.js?v=12"></script>
+<script src="/static/ui.js?v=12"></script>
+<script src="/static/webrtc.js?v=12"></script>
+<script src="/static/proctoring.js?v=12"></script>
+<script src="/static/gaze.js?v=12"></script>
 <script>
     // Listen for events dispatched from the Chrome Extension content script
     window.addEventListener('proctoring_violation', function (e) {
@@ -26,6 +110,54 @@
                 confidence: "High",
                 isCritical: true
             });
+        }
+    });
+    
+    function showSettingsNotification(message) {
+        const notification = document.createElement('div');
+        notification.className = 'settings-notification';
+        notification.textContent = message;
+        document.body.appendChild(notification);
+        
+        // Show notification
+        setTimeout(() => notification.classList.add('show'), 10);
+        
+        // Hide after 3 seconds
+        setTimeout(() => {
+            notification.classList.remove('show');
+            setTimeout(() => notification.remove(), 300);
+        }, 3000);
+    }
+    
+    function showRemoteControlFeedback(message) {
+        const feedback = document.createElement('div');
+        feedback.className = 'remote-control-feedback';
+        feedback.textContent = message;
+        document.body.appendChild(feedback);
+        
+        setTimeout(() => feedback.remove(), 2000);
+    }
+    
+    // Enhanced settings update handler
+    window.addEventListener('settings_update', function (e) {
+        console.log("[Candidate Dashboard] Settings update received:", e.detail);
+        if (e.detail && e.detail.settings) {
+            window.proctoringSettings = e.detail.settings;
+            console.log("[Candidate Dashboard] Applied settings:", window.proctoringSettings);
+            showSettingsNotification("Host updated proctoring settings");
+        }
+    });
+    
+    // Enhanced remote control handler
+    window.addEventListener('remote_control_applied', function (e) {
+        console.log("[Candidate Dashboard] Remote control applied:", e.detail);
+        if (e.detail && e.detail.action) {
+            const actionText = e.detail.action === 'mute' ? 
+                (e.detail.value ? 'Microphone muted by host' : 'Microphone unmuted by host') :
+                (e.detail.action === 'camera' ? 
+                    (e.detail.value ? 'Camera disabled by host' : 'Camera enabled by host') : 
+                    'Control applied by host');
+            showRemoteControlFeedback(actionText);
         }
     });
 </script>

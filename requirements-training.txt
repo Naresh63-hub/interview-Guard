@@ -1,9 +1,0 @@
-torch
-torchvision
-ultralytics
-librosa
-soundfile
-scikit-learn
-joblib
-tqdm
-matplotlib

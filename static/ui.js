@@ -174,6 +174,17 @@ function initialOf(name, fallback) {
 
 let bannerTimeout = null;
 
+// Escape untrusted strings before interpolating into innerHTML (audit titles,
+// YOLO object names, third-party ISP/location data, etc.).
+function escapeHtml(value) {
+    return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
+
 function showBanner(title, message, confidence = "", tone = "info") {
     // Suppress cheating/proctoring warnings on Candidate screen
     if (userRole === "candidate" && (tone === "warning" || tone === "danger" || title.toLowerCase().includes("cheat") || title.toLowerCase().includes("gaze") || title.toLowerCase().includes("switch") || title.toLowerCase().includes("copy") || title.toLowerCase().includes("paste"))) {
@@ -439,7 +450,7 @@ function buildNotesSummary() {
         `- ${sessionLabel}`,
         `- Interviewer: ${interviewerName}`,
         `- Candidate: ${candidateName}`,
-        `- Gaze alerts captured: ${suspiciousGazeEvents}`,
+        `- Security events: ${suspiciousGazeEvents}`,
         `- Attention frames analyzed: ${totalGazeFrames}`,
     ].join("\n");
 }
@@ -474,6 +485,12 @@ function applySessionStatus(status) {
         status?.bothPresent && Number.isFinite(startedAt) && startedAt > 0,
     );
 
+    // Proctoring monitors become meaningful once the session actually starts;
+    // enabling here lets browser-side alerts (tab switch, clipboard, VPN, …)
+    // pass the addAuditAlert guard even before the first gaze frame arrives.
+    window.sessionActive = bothPresent;
+    if (bothPresent) window.proctoringActive = true;
+
     if (!bothPresent) {
         sessionStartTime = null;
         renderWaitingSessionState();
@@ -485,6 +502,11 @@ function applySessionStatus(status) {
     // Clear timeline and session storage once session officially starts
     if (!window._sessionStartedFlag) {
         window._sessionStartedFlag = true;
+        // Fresh session: clear any per-session proctoring state (liveness
+        // challenge streak/status) so one candidate never inherits another's.
+        if (typeof window.resetLivenessChallengeState === "function") {
+            window.resetLivenessChallengeState();
+        }
         const timeline = document.getElementById("timeline");
         if (timeline) timeline.innerHTML = "";
         sessionStorage.removeItem("fullAuditLog_" + MEETING_ID);
@@ -840,205 +862,10 @@ if (btnViewAudit) {
                 item.innerHTML = `
                     <div class="marker"></div>
                     <div class="content">
-                        <h5 style="margin: 0 0 0.25rem; font-size: 1rem; color: var(--text-primary);">${log.title} ${log.confidence ? `<span class="confidence" style="margin-left: 0.5rem; font-size: 0.8rem; padding: 0.1rem 0.4rem; border-radius: 4px; background: rgba(255,255,255,0.1);">${log.confidence}</span>` : ''}</h5>
-                        <p style="margin: 0; color: var(--text-secondary); font-size: 0.9rem;">${log.message}</p>
+                        <h5 style="margin: 0 0 0.25rem; font-size: 1rem; color: var(--text-primary);">${escapeHtml(log.title)} ${log.confidence ? `<span class="confidence" style="margin-left: 0.5rem; font-size: 0.8rem; padding: 0.1rem 0.4rem; border-radius: 4px; background: rgba(255,255,255,0.1);">${escapeHtml(log.confidence)}</span>` : ''}</h5>
+                        <p style="margin: 0; color: var(--text-secondary); font-size: 0.9rem;">${escapeHtml(log.message)}</p>
                     </div>
-                    <span class="time" style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.25rem; display: block;">${log.timeStr}</span>
-                `;
-                timeline.appendChild(item);
-            });
-        }
-        modal.classList.add("open");
-    });
-}
-
-if (btnReviewAlert) {
-    btnReviewAlert.addEventListener("click", scrollAuditIntoView);
-}
-
-if (notesModal) {
-    notesModal.addEventListener("click", (event) => {
-        if (event.target === notesModal) closeNotesModal();
-    });
-}
-
-window.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape") return;
-    closeChatPanel();
-    closeNotesModal();
-});
-
-// ─── UI Updaters ──────────────────────────────────────────────────────────────
-const UI_UPDATER = {
-    updateRiskScore(scorePercent) {
-        // FIX: Use IDs instead of fragile deep querySelector chains
-        const pct = document.getElementById("risk-percentage");
-        const circle = document.getElementById("risk-circle");
-        const btn = document.getElementById("risk-level-btn");
-
-        if (pct) pct.textContent = `${scorePercent}%`;
-        if (circle)
-            circle.setAttribute("stroke-dasharray", `${scorePercent}, 100`);
-
-        if (btn) {
-            if (scorePercent < 30) {
-                btn.textContent = "LOW";
-                btn.className = "btn primary";
-            } else if (scorePercent < 65) {
-                btn.textContent = "MODERATE";
-                btn.className = "btn primary";
-                btn.style.background =
-                    "linear-gradient(135deg,#f59e0b,#d97706)";
-            } else {
-                btn.textContent = "HIGH";
-                btn.className = "btn primary";
-                btn.style.background =
-                    "linear-gradient(135deg,#ef4444,#b91c1c)";
-            }
-        }
-    },
-
-            "Session protection enabled",
-            "Camera monitoring, gaze analysis, and audit tracking are currently active.",
-            "Security status: active",
-            "success",
-        );
-    });
-}
-
-if (btnChat) {
-    btnChat.addEventListener("click", () => {
-        if (chatPanel.classList.contains("open")) {
-            closeChatPanel();
-        } else {
-            openChatPanel();
-            showBanner(
-                "Chat panel opened",
-                "Session chat is ready for local messages and interviewer notes.",
-                "Status: active",
-                "info",
-            );
-        }
-    });
-}
-
-if (btnCloseChat) {
-    btnCloseChat.addEventListener("click", closeChatPanel);
-}
-
-if (chatForm) {
-    chatForm.addEventListener("submit", (event) => {
-        event.preventDefault();
-        const message = chatInput?.value.trim();
-        if (!message) return;
-
-        appendChatMessage(currentDisplayName, message, "self");
-        if (chatInput) chatInput.value = "";
-    });
-}
-
-if (btnNotes) {
-    btnNotes.addEventListener("click", () => {
-        if (notesModal.classList.contains("open")) {
-            closeNotesModal();
-        } else {
-            if (notesEditor) {
-                notesEditor.value =
-                    localStorage.getItem("sessionNotes") || buildNotesSummary();
-            }
-            openNotesModal();
-            showBanner(
-                "Notes panel opened",
-                "Session notes are ready to review and edit.",
-                "Status: editable",
-                "info",
-            );
-        }
-    });
-}
-
-if (btnCloseNotes) {
-    btnCloseNotes.addEventListener("click", closeNotesModal);
-}
-
-if (btnSaveNotes) {
-    btnSaveNotes.addEventListener("click", () => {
-        const noteText = notesEditor?.value.trim() || buildNotesSummary();
-        localStorage.setItem("sessionNotes", noteText);
-        if (aiOutput) aiOutput.textContent = noteText;
-        showBanner(
-            "Notes saved",
-            "Session notes were saved successfully.",
-            "Status: saved",
-            "success",
-        );
-        closeNotesModal();
-    });
-}
-
-if (btnCopyNotes) {
-    btnCopyNotes.addEventListener("click", async () => {
-        const noteText = notesEditor?.value.trim() || buildNotesSummary();
-        try {
-            await navigator.clipboard.writeText(noteText);
-            showBanner(
-                "Notes copied",
-                "Session notes were copied to the clipboard.",
-                "Status: copied",
-                "success",
-            );
-        } catch (error) {
-            console.warn("copy notes failed:", error.message);
-            showBanner(
-                "Copy unavailable",
-                "Clipboard access is blocked. You can still select and copy the notes manually.",
-                "Status: blocked",
-                "warning",
-            );
-        }
-    });
-}
-
-if (btnMore) {
-    btnMore.addEventListener("click", () => {
-        if (!eyeAnalysisPopup) return;
-        const currentlyHidden =
-            window.getComputedStyle(eyeAnalysisPopup).display === "none";
-        eyeAnalysisPopup.style.display = currentlyHidden ? "block" : "none";
-        showBanner(
-            currentlyHidden
-                ? "Eye analysis panel opened"
-                : "Eye analysis panel hidden",
-            currentlyHidden
-                ? "The live eye analysis panel is now visible."
-                : "The live eye analysis panel has been hidden.",
-            currentlyHidden ? "Status: visible" : "Status: hidden",
-            "info",
-        );
-    });
-}
-
-if (btnViewAudit) {
-    btnViewAudit.addEventListener("click", () => {
-        const modal = document.getElementById("audit-log-modal");
-        const timeline = document.getElementById("modal-full-timeline");
-        if (!modal || !timeline) return;
-        
-        const logs = JSON.parse(sessionStorage.getItem('fullAuditLog_' + MEETING_ID) || '[]');
-        if (logs.length === 0) {
-            timeline.innerHTML = '<p style="color: var(--text-secondary);">No audit events recorded yet.</p>';
-        } else {
-            timeline.innerHTML = '';
-            logs.reverse().forEach(log => {
-                const item = document.createElement('div');
-                item.className = `timeline-item${log.isCritical ? ' critical' : ''}`;
-                item.innerHTML = `
-                    <div class="marker"></div>
-                    <div class="content">
-                        <h5 style="margin: 0 0 0.25rem; font-size: 1rem; color: var(--text-primary);">${log.title} ${log.confidence ? `<span class="confidence" style="margin-left: 0.5rem; font-size: 0.8rem; padding: 0.1rem 0.4rem; border-radius: 4px; background: rgba(255,255,255,0.1);">${log.confidence}</span>` : ''}</h5>
-                        <p style="margin: 0; color: var(--text-secondary); font-size: 0.9rem;">${log.message}</p>
-                    </div>
-                    <span class="time" style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.25rem; display: block;">${log.timeStr}</span>
+                    <span class="time" style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.25rem; display: block;">${escapeHtml(log.timeStr)}</span>
                 `;
                 timeline.appendChild(item);
             });
@@ -1130,9 +957,11 @@ const UI_UPDATER = {
     },
 
     addAuditAlert(title, message, confidence, isCritical = false, fromRemote = false) {
-        // Guard: Prevent any proctoring/cheating alerts from registering/sending until candidate's face is visible at least once
+        // Guard: Prevent any proctoring/cheating alerts from registering/sending
+        // until the session is active (both participants connected) or the
+        // candidate's face has been seen at least once.
         const isConnectionEvent = title === "Participant Joined" || title === "Participant Left" || title === "Session Started";
-        if (!window.proctoringActive && !isConnectionEvent) {
+        if (!window.proctoringActive && !window.sessionActive && !isConnectionEvent) {
             console.log(`Proctoring not active yet. Ignoring alert: [${title}] ${message}`);
             return;
         }
@@ -1141,35 +970,557 @@ const UI_UPDATER = {
         if (!fromRemote && isCandidate && typeof socket !== "undefined" && socket) {
             socket.emit("audit_event", {
                 meetingId: MEETING_ID,
+                title: title,
+                message: message,
+                confidence: confidence,
+                isCritical: isCritical,
+            });
         }
+
         // Save to sessionStorage for Full Audit Log view
-                  "YOLO Vision",
-                  true
-              );
-              window.lastYoloAuditTime = now;
-              if (typeof suspiciousGazeEvents !== 'undefined') {
-                  suspiciousGazeEvents += 15;
-              }
-          }
-      }
+        const timeStr = new Date().toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+        });
+        const event = { title, message, confidence, isCritical, timeStr };
+        try {
+            const logs = JSON.parse(sessionStorage.getItem('fullAuditLog_' + MEETING_ID) || '[]');
+            logs.push(event);
+            sessionStorage.setItem('fullAuditLog_' + MEETING_ID, JSON.stringify(logs));
+        } catch (e) { /* storage unavailable */ }
 
+        // Append to the live audit timeline
+        const timeline = document.getElementById("timeline");
+        if (timeline) {
+            const item = document.createElement("div");
+            item.className = `timeline-item${isCritical ? " critical" : ""}`;
+            item.innerHTML = `
+                <div class="marker"></div>
+                <div class="content">
+                    <h5>${escapeHtml(title)} ${confidence ? `<span class="confidence">${escapeHtml(confidence)}</span>` : ""}</h5>
+                    <p>${escapeHtml(message)}</p>
+                </div>
+                <span class="time">${escapeHtml(timeStr)}</span>
+            `;
+            timeline.appendChild(item);
+            timeline.scrollTop = timeline.scrollHeight;
+        }
 
-    // Recalculate scores only if session has started
-    if (typeof sessionStartTime !== "undefined" && sessionStartTime) {
-        const recentPenalty = recentSuspiciousEvents.length;
-        const attentionScore = Math.max(
-            0,
-            Math.min(100, 100 - recentPenalty * 10),
-        );
-        const riskScore = Math.max(0, Math.min(100, recentPenalty * 10));
+        // Surface critical events via the top banner
+        if (isCritical && typeof showBanner !== "undefined") {
+            showBanner(title, message, confidence, "danger");
+        }
+    },
+};
+
+// ─── Unified Risk Score Engine + Signal Fusion ──────────────────────────────
+// Every cheating signal (gaze, head pose, YOLO objects, liveness, audio,
+// forensics, network, …) routes through bumpRisk(weight, source, confidence).
+//
+// 1. CONFIDENCE: each detection reports how sure it is (0-100). The gauge is
+//    precision-first — a low-confidence signal contributes less weight:
+//    effective = weight * (0.35 + 0.65 * confidence/100).
+// 2. FUSION: signals are also logged into a sliding window. When >= 2
+//    INDEPENDENT sources agree within the window with sufficient average
+//    confidence, a single fused critical alert fires — a lone weak signal
+//    (one glance away, one whisper) can never escalate alone.
+// 3. COOLDOWN: fused alerts are globally rate-limited so the trail can't be
+//    spammed even when several detectors are legitimately busy.
+const RISK_EVENT_DECAY_MS = 45000;  // each weight halves every ~31s
+const RISK_MAX_AGE_MS = 300000;     // drop events older than 5 minutes
+const RISK_MAX_EVENTS = 100;        // cap memory in a long session
+const FUSION_WINDOW_MS = 60000;     // signals agree within this window
+const FUSION_MIN_SOURCES = 2;       // distinct sources required to fuse
+const FUSION_MIN_SOURCE_CONFIDENCE = 40; // a source below this is "uncertain"
+const FUSION_MIN_AVG_CONFIDENCE = 50; // …with at least this avg confidence
+const FUSION_COOLDOWN_MS = 60000;   // global cooldown between fused alerts
+window.riskEvents = [];
+window.signalLog = [];
+window.lastFusedAlertAt = 0;
+
+function bumpRisk(weight, source = "", confidence = 100) {
+    const now = Date.now();
+    const conf = Math.max(1, Math.min(100, Number(confidence) || 100));
+    // Precision-first weighting: low-confidence signals barely move the gauge.
+    const effectiveWeight = Math.max(
+        1,
+        Math.round(weight * (0.35 + 0.65 * (conf / 100))),
+    );
+    window.riskEvents.push({ t: now, w: effectiveWeight, s: source, c: conf });
+    if (window.riskEvents.length > RISK_MAX_EVENTS) {
+        window.riskEvents = window.riskEvents.slice(-RISK_MAX_EVENTS);
+    }
+    // Keep the historical counter (notes summary / audit display) — this is
+    // an event count now, not the score.
+    if (typeof suspiciousGazeEvents !== "undefined") {
+        suspiciousGazeEvents = Math.min(999, suspiciousGazeEvents + 1);
+    }
+    // Feed the fusion window (skip self-triggered fusion bumps).
+    if (source !== "fusion") {
+        window.signalLog.push({ t: now, s: source, w: weight, c: conf });
+        evaluateFusion();
+    }
+    return recomputeRiskScore();
+}
+
+function evaluateFusion() {
+    if (typeof UI_UPDATER === "undefined" || !UI_UPDATER.addAuditAlert) return;
+    const now = Date.now();
+    // Prune the window; ignore fusion's own events. A signal below
+    // FUSION_MIN_SOURCE_CONFIDENCE is an UNCERTAIN state (e.g. "no face seen"
+    // at confidence 30), not a positive detection — it must neither count as
+    // an agreeing source nor drag the average down. This keeps a lone camera-
+    // cover from ever fusing with an unrelated detector.
+    window.signalLog = window.signalLog.filter(
+        (e) =>
+            now - e.t <= FUSION_WINDOW_MS &&
+            e.s &&
+            e.s !== "fusion" &&
+            e.c >= FUSION_MIN_SOURCE_CONFIDENCE,
+    );
+    const sources = [...new Set(window.signalLog.map((e) => e.s))];
+    if (sources.length < FUSION_MIN_SOURCES) return;
+    const avgConf =
+        window.signalLog.reduce((a, e) => a + e.c, 0) / window.signalLog.length;
+    if (avgConf < FUSION_MIN_AVG_CONFIDENCE) return;
+    if (now - window.lastFusedAlertAt < FUSION_COOLDOWN_MS) return;
+    window.lastFusedAlertAt = now;
+
+    UI_UPDATER.addAuditAlert(
+        "Multiple Signals — Cheating Suspected",
+        `${sources.length} independent signals agreed within the last minute: ` +
+            `${sources.join(", ")} (avg confidence ${Math.round(avgConf)}%).`,
+        "FUSED",
+        true,
+    );
+    // Bump the gauge directly (bypass bumpRisk to avoid recursion).
+    window.riskEvents.push({ t: now, w: 25, s: "fusion", c: avgConf });
+    if (window.riskEvents.length > RISK_MAX_EVENTS) {
+        window.riskEvents = window.riskEvents.slice(-RISK_MAX_EVENTS);
+    }
+    recomputeRiskScore();
+}
+
+function recomputeRiskScore() {
+    const now = Date.now();
+    window.riskEvents = window.riskEvents.filter(
+        (e) => now - e.t <= RISK_MAX_AGE_MS,
+    );
+    let sum = 0;
+    for (const e of window.riskEvents) {
+        sum += e.w * Math.exp(-(now - e.t) / RISK_EVENT_DECAY_MS);
+    }
+    const risk = Math.max(0, Math.min(100, Math.round(sum)));
+    if (typeof UI_UPDATER !== "undefined" && UI_UPDATER.updateRiskScore) {
+        UI_UPDATER.updateRiskScore(risk);
+    }
+    return risk;
+}
+window.bumpRisk = bumpRisk;
+window.recomputeRiskScore = recomputeRiskScore;
+window.evaluateFusion = evaluateFusion;
+
+// ─── Gaze Alert Overlay ────────────────────────────────────────────────────
+function setGazeAlert(message, critical) {
+    // Suppress gaze alerts on candidate screen - only show on host page
+    if (userRole === "candidate") {
+        console.log(`Suppressing gaze alert on Candidate screen: ${message}`);
+        return;
+    }
+    
+    const alertEl = document.getElementById("alert");
+    if (!alertEl) return;
+    alertEl.textContent = message;
+    alertEl.classList.toggle("active", Boolean(critical));
+}
+
+// ─── Pupil Animation ───────────────────────────────────────────────────────
+function animatePupil(direction) {
+    const pupil = document.getElementById("pupil");
+    if (!pupil) return;
+    const offsets = {
+        LEFT: { x: -30, y: 0 },
+        RIGHT: { x: 30, y: 0 },
+        LOOKING_UP: { x: 0, y: -14 },
+        LOOKING_DOWN: { x: 0, y: 14 },
+        CENTER: { x: 0, y: 0 },
+        NO_FACE: { x: 0, y: 0 },
+    };
+    const off = offsets[direction] || offsets.CENTER;
+    pupil.style.transform = `translate(${off.x}px, ${off.y}px)`;
+}
+
+// ─── Gaze Data UI Update ───────────────────────────────────────────────────
+function updateGazeUI(data) {
+    if (!data) return;
+    console.log("[UI] Updating gaze UI with data:", data);
+    const now = Date.now();
+    let direction = data.direction || "NO_FACE";
+    let lookingAway = data.lookingAway === true;
+
+    // Gaze + head-pose thresholds (client-side refinement of backend verdict)
+    if (window.proctoringActive && window.proctoringSettings.gazeCheck) {
+        let pitchThresholdDown = -10;
+        let pitchThresholdUp = 15;
+        let yawThreshold = 15;
+
+        if (window.proctoringSettings.gazeSensitivity === "low") {
+            pitchThresholdDown = -15;
+            pitchThresholdUp = 20;
+            yawThreshold = 22;
+        } else if (window.proctoringSettings.gazeSensitivity === "high") {
+            pitchThresholdDown = -8;
+            pitchThresholdUp = 12;
+            yawThreshold = 10;
+        }
+
+        const pitch = data.pose?.pitch || 0;
+        const yaw = data.pose?.yaw || 0;
+
+        if (direction === "NO_FACE") {
+            lookingAway = true;
+        } else {
+            if (pitch < pitchThresholdDown) {
+                direction = "LOOKING_DOWN";
+                lookingAway = true;
+            } else if (pitch > pitchThresholdUp) {
+                direction = "LOOKING_UP";
+                lookingAway = true;
+            } else if (yaw < -yawThreshold) {
+                direction = "RIGHT";
+                lookingAway = true;
+            } else if (yaw > yawThreshold) {
+                direction = "LEFT";
+                lookingAway = true;
+            } else {
+                if (direction === "LEFT" || direction === "RIGHT") {
+                    if (window.proctoringSettings.gazeSensitivity !== "low") {
+                        lookingAway = true;
+                    } else {
+                        direction = "CENTER";
+                    }
+                }
+            }
+        }
+    }
+
+    // Dwell-based smoothing: momentary glances must persist for ~2-5s before
+    // they count as real "looking away" events (cuts single-frame false alarms
+    // from brief head movement or a glance at the interviewer).
+    const dwellMs =
+        window.proctoringSettings.gazeSensitivity === "low" ? 5000
+        : window.proctoringSettings.gazeSensitivity === "high" ? 2000
+        : 3000;
+    let sustainedAway = false;
+    if (lookingAway) {
+        if (window._lastAwayDir !== direction) {
+            window._awaySince = now;
+            window._lastAwayDir = direction;
+        }
+        sustainedAway = now - window._awaySince >= dwellMs;
+    } else {
+        window._awaySince = null;
+        window._lastAwayDir = null;
+    }
+
+    // Proctoring becomes active once a face has been seen at least once
+    // For host, activate immediately when receiving gaze data
+    if (data.faceDetected || (userRole === "host" || userRole === "interviewer")) {
+        window.proctoringActive = true;
+    }
+
+    // Vision Tracking summary (host dashboard)
+    const statFace = document.getElementById("stat-face-detected");
+    if (statFace) {
+        statFace.textContent = data.faceDetected ? "Detected" : "Not Detected";
+        statFace.className = data.faceDetected ? "green-text" : "gray-text";
+    }
+    const statCamera = document.getElementById("stat-looking-camera");
+    if (statCamera) {
+        const ok = data.faceDetected && !data.lookingAway;
+        statCamera.textContent = ok ? "Yes" : "No";
+        statCamera.className = ok ? "green-text" : "gray-text";
+    }
+    // statCamera reflects the instant signal (camera contact is immediate);
+    // statAway uses sustainedAway so the summary doesn't flicker on brief
+    // glances — deliberately different, not a bug.
+    const statAway = document.getElementById("stat-looking-away");
+    if (statAway) {
+        const away = sustainedAway;
+        statAway.textContent = away ? "Yes" : "No";
+        statAway.className = away ? "danger-text" : "gray-text";
+    }
+    const statPose = document.getElementById("stat-head-pose-abnormal");
+    if (statPose) {
+        const abnormal = !!(data.pose && data.pose.abnormal);
+        statPose.textContent = abnormal ? "Yes" : "No";
+        statPose.className = abnormal ? "danger-text" : "gray-text";
+    }
+    const statRefl = document.getElementById("stat-reflections-detected");
+    if (statRefl) {
+        statRefl.textContent = data.reflectionDetected ? "Yes" : "No";
+        statRefl.className = data.reflectionDetected ? "danger-text" : "gray-text";
+    }
+
+    // Update direction label
+    const dirLabel = document.getElementById("gaze-direction-label");
+    if (dirLabel) dirLabel.textContent = direction;
+
+    // Update Head Pose label
+    const poseLabel = document.getElementById("head-pose-label");
+    if (poseLabel) {
+        if (direction === "LOOKING_DOWN" || direction === "LOOKING_UP") {
+            poseLabel.textContent = direction;
+        } else {
+            poseLabel.textContent = "FORWARD";
+        }
+    }
+
+    // Update Faces Detected label
+    const faceCountEl = document.getElementById("face-count-label");
+    if (faceCountEl) {
+        const numFaces = data.multipleFaces ? "2+" : (data.faceDetected ? "1" : "0");
+        faceCountEl.textContent = numFaces;
+        faceCountEl.className = data.multipleFaces ? "value red" : "value white";
+    }
+
+    // Update Face Confidence label
+    const faceConfidenceEl = document.getElementById("face-confidence-label");
+    if (faceConfidenceEl) {
+        const confidence = data.confidence || 0;
+        faceConfidenceEl.textContent = `${Math.round(confidence)}%`;
+        faceConfidenceEl.className = confidence > 70 ? "value green" : (confidence > 40 ? "value yellow" : "value red");
+    }
+
+    // Update environment face visibility
+    const envFace = document.getElementById("env-face");
+    if (envFace) envFace.textContent = data.faceDetected ? "Clear" : "Not Detected";
+
+    // Animate pupil
+    animatePupil(window.proctoringActive ? direction : "CENTER");
+
+    // Prune events older than 30s (decay window for the risk score)
+    recentSuspiciousEvents = recentSuspiciousEvents.filter(
+        (t) => now - t <= 30000,
+    );
+
+    if (sustainedAway) {
+        lookAwayFrames++;
+        // Push at most one event per 4s so a long look-away elevates the risk
+        // score without spiking it on the first dwell threshold crossing.
+        if (!window._lastAwayEventAt || now - window._lastAwayEventAt >= 4000) {
+            window._lastAwayEventAt = now;
+            recentSuspiciousEvents.push(now);
+            // Confidence comes from the backend verdict (MediaPipe 90, Haar 55,
+            // no-face 30) — a camera cover alone won't reach fusion thresholds.
+            bumpRisk(16, "gaze", data.confidence || 75);
+        }
+
+        let message = `Candidate looking ${direction.toLowerCase()}!`;
+        if (direction === "NO_FACE") message = "Candidate face not detected!";
+        if (direction === "LOOKING_DOWN") message = "Candidate is looking down (reading notes?)";
+        if (direction === "LOOKING_UP") message = "Candidate is looking up significantly.";
+
+        if (recentSuspiciousEvents.length > 5) {
+            setGazeAlert("⚠ Cheating behavior detected!", true);
+            if (now - (window.lastGazeAuditTime || 0) > 15000) {
+                UI_UPDATER.addAuditAlert(
+                    "Cheating Suspected",
+                    "Repeated gaze anomalies detected",
+                    "Live",
+                    true,
+                );
+                window.lastGazeAuditTime = now;
+            }
+        } else {
+            setGazeAlert(message, true);
+            if (now - (window.lastGazeAuditTime || 0) > 10000) {
+                UI_UPDATER.addAuditAlert(
+                    "Gaze Anomaly",
+                    message,
+                    "Live",
+                    direction === "NO_FACE" || direction === "LOOKING_DOWN",
+                );
+                window.lastGazeAuditTime = now;
+            }
+        }
+    } else if (lookingAway) {
+        // Brief glance — show it live but don't count it as an event yet
+        setGazeAlert("Gaze: brief glance away", false);
+    } else {
+        window._lastAwayEventAt = null;
+        setGazeAlert(window.proctoringActive ? "Gaze centered ✓" : "Waiting for candidate...", false);
+    }
+
+    // Head-pose anomaly signal (independent of gaze direction — feeds fusion).
+    // The backend only flags after 2s of persistence, so this is already
+    // high-precision; gate the risk bump on the same audit cooldown.
+    if (data.pose && data.pose.abnormal && window.proctoringSettings.gazeCheck) {
+        if (now - (window.lastHeadAuditTime || 0) > 15000) {
+            window.lastHeadAuditTime = now;
+            bumpRisk(10, "head", data.pose.confidence || 80);
+        }
+    }
+
+    // Check for Multiple Faces
+    if (data.multipleFaces && window.proctoringSettings.gazeCheck) {
+        setGazeAlert("⚠ MULTIPLE FACES DETECTED!", true);
+        if (now - (window.lastMultiFaceAuditTime || 0) > 20000) {
+            UI_UPDATER.addAuditAlert(
+                "Critical Security Breach",
+                "Multiple faces detected in the camera frame!",
+                "100%",
+                true,
+            );
+            window.lastMultiFaceAuditTime = now;
+            bumpRisk(15, "multiple_faces", 95);
+        }
+    }
+
+    // Check for Corneal Screen Reflections
+    if (data.reflectionDetected && window.proctoringSettings.gazeCheck) {
+        setGazeAlert("⚠ SCREEN REFLECTION DETECTED IN EYE!", true);
+        if (now - (window.lastReflectionAuditTime || 0) > 20000) {
+            UI_UPDATER.addAuditAlert(
+                "Hidden Device Detected",
+                "Unnatural rectangular reflection detected in candidate's iris (possible phone or second monitor).",
+                "95%",
+                true,
+            );
+            window.lastReflectionAuditTime = now;
+            bumpRisk(12, "reflection", 90);
+        }
+    }
+
+    // Check for Contraband Objects (YOLO)
+    if (data.objectsDetected && data.objectsDetected.length > 0 && window.proctoringSettings.gazeCheck) {
+        const objectsStr = data.objectsDetected.join(", ");
+        setGazeAlert(`⚠ ILLEGAL OBJECT DETECTED: ${objectsStr.toUpperCase()}`, true);
+        if (now - (window.lastYoloAuditTime || 0) > 15000) {
+            UI_UPDATER.addAuditAlert(
+                "Contraband Object Detected",
+                `YOLOv8 detected unauthorized items in the frame: ${objectsStr}`,
+                "YOLO Vision",
+                true,
+            );
+            window.lastYoloAuditTime = now;
+            // YOLO reports its box confidence (2-run confirmed, so 85+ typical).
+            bumpRisk(15, "yolo", data.objectsConfidence || 85);
+        }
+    }
+
+    // Recalculate scores - for host, calculate as soon as we receive data
+    // For candidate, only calculate if session has started
+    const shouldCalculateScores = (userRole === "host" || userRole === "interviewer") || 
+                                  (typeof sessionStartTime !== "undefined" && sessionStartTime);
+    
+    if (shouldCalculateScores) {
+        const riskScore = recomputeRiskScore();
+        const attentionScore = Math.max(0, Math.min(100, 100 - riskScore));
 
         UI_UPDATER.updateGazeAttention(attentionScore);
-        UI_UPDATER.updateRiskScore(riskScore);
+    }
+}
+// ─── Draggable Picture-in-Picture ─────────────────────────────────────────────
+function makeElementDraggable(elmnt) {
+    if (!elmnt) return;
+    let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
+    
+    elmnt.style.cursor = 'grab';
+    
+    elmnt.onmousedown = dragMouseDown;
+    elmnt.ontouchstart = dragTouchStart;
+
+    function dragMouseDown(e) {
+        e = e || window.event;
+        if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT') return;
+        e.preventDefault();
+        pos3 = e.clientX;
+        pos4 = e.clientY;
+        document.onmouseup = closeDragElement;
+        document.onmousemove = elementDrag;
+        elmnt.style.cursor = 'grabbing';
+    }
+
+    function elementDrag(e) {
+        e = e || window.event;
+        e.preventDefault();
+        pos1 = pos3 - e.clientX;
+        pos2 = pos4 - e.clientY;
+        pos3 = e.clientX;
+        pos4 = e.clientY;
+        
+        const newTop = elmnt.offsetTop - pos2;
+        const newLeft = elmnt.offsetLeft - pos1;
+        
+        const parent = elmnt.parentElement;
+        const parentWidth = parent ? parent.clientWidth : window.innerWidth;
+        const parentHeight = parent ? parent.clientHeight : window.innerHeight;
+        
+        const topBound = Math.max(0, Math.min(newTop, parentHeight - elmnt.clientHeight));
+        const leftBound = Math.max(0, Math.min(newLeft, parentWidth - elmnt.clientWidth));
+
+        elmnt.style.top = topBound + "px";
+        elmnt.style.left = leftBound + "px";
+        elmnt.style.right = "auto";
+        elmnt.style.bottom = "auto";
+    }
+
+    function closeDragElement() {
+        document.onmouseup = null;
+        document.onmousemove = null;
+        elmnt.style.cursor = 'grab';
+    }
+    
+    function dragTouchStart(e) {
+        if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT') return;
+        const touch = e.touches[0];
+        pos3 = touch.clientX;
+        pos4 = touch.clientY;
+        document.ontouchend = closeDragTouch;
+        document.ontouchmove = elementTouchDrag;
+        elmnt.style.cursor = 'grabbing';
+    }
+    
+    function elementTouchDrag(e) {
+        const touch = e.touches[0];
+        pos1 = pos3 - touch.clientX;
+        pos2 = pos4 - touch.clientY;
+        pos3 = touch.clientX;
+        pos4 = touch.clientY;
+        
+        const newTop = elmnt.offsetTop - pos2;
+        const newLeft = elmnt.offsetLeft - touch.clientX; // Wait, let's make sure it is touch.clientX, pos1 calculation takes care of it, offsetting by pos1:
+        
+        // Actually, calculate newLeft similar to mouse elementDrag:
+        // const newLeft = elmnt.offsetLeft - pos1;
+        // Let's keep it uniform:
+        const nLeft = elmnt.offsetLeft - pos1;
+        
+        const parent = elmnt.parentElement;
+        const parentWidth = parent ? parent.clientWidth : window.innerWidth;
+        const parentHeight = parent ? parent.clientHeight : window.innerHeight;
+        
+        const topBound = Math.max(0, Math.min(newTop, parentHeight - elmnt.clientHeight));
+        const leftBound = Math.max(0, Math.min(nLeft, parentWidth - elmnt.clientWidth));
+
+        elmnt.style.top = topBound + "px";
+        elmnt.style.left = leftBound + "px";
+        elmnt.style.right = "auto";
+        elmnt.style.bottom = "auto";
+    }
+    
+    function closeDragTouch() {
+        document.ontouchend = null;
+        document.ontouchmove = null;
+        elmnt.style.cursor = 'grab';
     }
 }
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 window.addEventListener("load", async () => {
+    console.log("[Init] Page loading for role:", window.userRole);
     initTheme();
     // Populate User Profile Header
     const nameStr = localStorage.getItem("displayName") || "User";
@@ -1182,6 +1533,35 @@ window.addEventListener("load", async () => {
     if (headerRole) headerRole.textContent = roleStr;
     if (headerName) headerName.textContent = nameStr;
     
+    console.log("[Init] User role set to:", roleStr, "Display name:", nameStr);
+    
+    // Candidate-specific initializations
+    if (userRole === "candidate") {
+        console.log("[Init] Candidate-specific initialization");
+        
+        // Ensure proctoring settings are initialized
+        if (!window.proctoringSettings) {
+            window.proctoringSettings = {
+                gazeSensitivity: "medium",
+                allowedTabSwitches: 3,
+                gazeCheck: true,
+                audioCheck: true,
+                vmCheck: true,
+                dualMonitorCheck: true,
+                devToolsCheck: true,
+                clipboardCheck: true
+            };
+            console.log("[Init] Initialized default proctoring settings for candidate");
+        }
+        
+        // For candidates, hide the PiP container since they see their video in main area
+        const pipContainer = document.getElementById("pip-container");
+        if (pipContainer) {
+            pipContainer.style.display = "none"; 
+            console.log("[Init] Hidden PiP container for candidate (using main video area)");
+        }
+    }
+    
     // Add CSS class for role-based UI separation
     const isCandidateDashboard = window.location.pathname.includes("/candidate_dashboard");
     if (isCandidateDashboard || userRole === "candidate" || roleStr.toUpperCase() === "CANDIDATE") {
@@ -1193,6 +1573,9 @@ window.addEventListener("load", async () => {
             if (endBtn) {
                 endBtn.innerHTML = '<i class="ph-fill ph-phone-disconnect"></i> Leave Meeting';
             }
+            
+            // For candidates, ensure main video shows their local stream
+            console.log("[Init] Candidate view - ensuring local video in main area");
         }
     }
 
@@ -1230,6 +1613,20 @@ window.addEventListener("load", async () => {
 
     // Initialize auto-hiding toolbar logic
     initToolbarAutoHide();
+
+    // Initialize draggable local picture-in-picture video
+    const pipContainer = document.getElementById("pip-container");
+    if (pipContainer) {
+        makeElementDraggable(pipContainer);
+    }
+
+    // Initialize host-specific settings
+    if (userRole === "host" || userRole === "interviewer") {
+        console.log("[Init] Initializing host-specific settings");
+        initHostSettings();
+        initModeratorControls();
+        initSaveSettings();
+    }
 
     // re-check extensions after a short delay
     setTimeout(checkExtensions, 2000);
@@ -1278,28 +1675,63 @@ if (btnAnalyzeChat) {
 //  UI HELPERS & BUTTON ACTIONS
 // ═══════════════════════════════════════════════════════
 
-const btnSettings = document.getElementById("btn-settings");
-const settingsModal = document.getElementById("settings-modal");
-if (btnSettings && settingsModal) {
-    btnSettings.addEventListener("click", () => {
-        // Populate fields from current settings
-        document.getElementById("settings-gaze-sensitivity").value = window.proctoringSettings.gazeSensitivity;
-        document.getElementById("settings-tab-switches").value = window.proctoringSettings.allowedTabSwitches;
-        document.getElementById("settings-check-gaze").checked = window.proctoringSettings.gazeCheck;
-        document.getElementById("settings-check-audio").checked = window.proctoringSettings.audioCheck;
-        document.getElementById("settings-check-vm").checked = window.proctoringSettings.vmCheck;
-        document.getElementById("settings-check-monitor").checked = window.proctoringSettings.dualMonitorCheck;
-        document.getElementById("settings-check-devtools").checked = window.proctoringSettings.devToolsCheck;
-        document.getElementById("settings-check-clipboard").checked = window.proctoringSettings.clipboardCheck;
+function initHostSettings() {
+    // Wait for DOM to be fully loaded
+    setTimeout(() => {
+        const btnSettings = document.getElementById("btn-settings");
+        const settingsModal = document.getElementById("settings-modal");
+        
+        console.log("[Settings] Initializing host settings button:", btnSettings);
+        console.log("[Settings] Settings modal found:", settingsModal);
+        
+        if (btnSettings && settingsModal) {
+            btnSettings.addEventListener("click", () => {
+                console.log("[Settings] Settings button clicked");
+                
+                // Populate fields from current settings
+                const gazeSensitivityEl = document.getElementById("settings-gaze-sensitivity");
+                const tabSwitchesEl = document.getElementById("settings-tab-switches");
+                const gazeCheckEl = document.getElementById("settings-check-gaze");
+                const audioCheckEl = document.getElementById("settings-check-audio");
+                const vmCheckEl = document.getElementById("settings-check-vm");
+                const monitorCheckEl = document.getElementById("settings-check-monitor");
+                const devToolsCheckEl = document.getElementById("settings-check-devtools");
+                const clipboardCheckEl = document.getElementById("settings-check-clipboard");
+                
+                console.log("[Settings] Setting elements found:", {
+                    gazeSensitivity: !!gazeSensitivityEl,
+                    tabSwitches: !!tabSwitchesEl,
+                    gazeCheck: !!gazeCheckEl,
+                    audioCheck: !!audioCheckEl,
+                    vmCheck: !!vmCheckEl,
+                    monitorCheck: !!monitorCheckEl,
+                    devToolsCheck: !!devToolsCheckEl,
+                    clipboardCheck: !!clipboardCheckEl
+                });
+                
+                if (gazeSensitivityEl) gazeSensitivityEl.value = window.proctoringSettings.gazeSensitivity || "medium";
+                if (tabSwitchesEl) tabSwitchesEl.value = window.proctoringSettings.allowedTabSwitches || 3;
+                if (gazeCheckEl) gazeCheckEl.checked = window.proctoringSettings.gazeCheck !== false;
+                if (audioCheckEl) audioCheckEl.checked = window.proctoringSettings.audioCheck !== false;
+                if (vmCheckEl) vmCheckEl.checked = window.proctoringSettings.vmCheck !== false;
+                if (monitorCheckEl) monitorCheckEl.checked = window.proctoringSettings.dualMonitorCheck !== false;
+                if (devToolsCheckEl) devToolsCheckEl.checked = window.proctoringSettings.devToolsCheck !== false;
+                if (clipboardCheckEl) clipboardCheckEl.checked = window.proctoringSettings.clipboardCheck !== false;
 
-        // Update moderator remote buttons based on candidate state
-        updateModeratorButtonsUI();
+                // Update moderator remote buttons based on candidate state
+                updateModeratorButtonsUI();
 
-        settingsModal.classList.add("open");
-    });
+                settingsModal.classList.add("open");
+                console.log("[Settings] Settings modal opened");
+            });
+        } else {
+            console.warn("[Settings] Could not initialize settings - button or modal not found");
+        }
+    }, 100); // Small delay to ensure DOM is ready
 }
 
 function updateModeratorButtonsUI() {
+    console.log("[Settings] Updating moderator buttons UI - Candidate muted:", window.candidateMicMuted, "Candidate video stopped:", window.candidateVideoStopped);
     const btnMuteCand = document.getElementById("settings-btn-mute-candidate");
     const iconMuteCand = document.getElementById("settings-icon-mute-candidate");
     const textMuteCand = document.getElementById("settings-text-mute-candidate");
@@ -1318,6 +1750,8 @@ function updateModeratorButtonsUI() {
             iconMuteCand.className = "ph-fill ph-microphone";
             btnMuteCand.style.background = "";
         }
+    } else {
+        console.warn("[Settings] Mute button elements not found");
     }
 
     if (btnCamCand && iconCamCand && textCamCand) {
@@ -1330,27 +1764,60 @@ function updateModeratorButtonsUI() {
             iconCamCand.className = "ph-fill ph-video-camera";
             btnCamCand.style.background = "";
         }
+    } else {
+        console.warn("[Settings] Camera button elements not found");
     }
 }
 
-const btnMuteCand = document.getElementById("settings-btn-mute-candidate");
-if (btnMuteCand) {
-    btnMuteCand.addEventListener("click", () => {
-        window.candidateMicMuted = !window.candidateMicMuted;
-        updateModeratorButtonsUI();
-        if (socket && socket.connected) {
-            socket.emit("remote_control", {
-                meetingId: MEETING_ID,
-                action: "mute",
-                value: window.candidateMicMuted
+function initModeratorControls() {
+    // Wait for DOM to be fully loaded
+    setTimeout(() => {
+        const btnMuteCand = document.getElementById("settings-btn-mute-candidate");
+        if (btnMuteCand) {
+            btnMuteCand.addEventListener("click", () => {
+                console.log("[Settings] Mute button clicked");
+                window.candidateMicMuted = !window.candidateMicMuted;
+                updateModeratorButtonsUI();
+                if (socket && socket.connected) {
+                    socket.emit("remote_control", {
+                        meetingId: MEETING_ID,
+                        action: "mute",
+                        value: window.candidateMicMuted
+                    });
+                }
+                UI_UPDATER.addAuditAlert(
+                    window.candidateMicMuted ? "Remote Mute Sent" : "Remote Unmute Sent",
+                    `Host sent command to ${window.candidateMicMuted ? 'mute' : 'unmute'} the candidate microphone.`,
+                    "Moderator Control"
+                );
             });
+        } else {
+            console.warn("[Settings] Mute button not found");
         }
-        UI_UPDATER.addAuditAlert(
-            window.candidateMicMuted ? "Remote Mute Sent" : "Remote Unmute Sent",
-            `Host sent command to ${window.candidateMicMuted ? 'mute' : 'unmute'} the candidate microphone.`,
-            "Moderator Control"
-        );
-    });
+
+        const btnCamCand = document.getElementById("settings-btn-cam-candidate");
+        if (btnCamCand) {
+            btnCamCand.addEventListener("click", () => {
+                console.log("[Settings] Camera button clicked");
+                window.candidateVideoStopped = !window.candidateVideoStopped;
+                updateModeratorButtonsUI();
+                if (socket && socket.connected) {
+                    socket.emit("remote_control", {
+                        meetingId: MEETING_ID,
+                        action: "camera",
+                        value: window.candidateVideoStopped
+                    });
+                }
+                UI_UPDATER.addAuditAlert(
+                    window.candidateVideoStopped ? "Remote Camera Kill Sent" : "Remote Camera Enable Sent",
+                    `Host sent command to ${window.candidateVideoStopped ? 'disable' : 'enable'} the candidate camera feed.`,
+                    "Moderator Control"
+                );
+            });
+        } else {
+            console.warn("[Settings] Camera button not found");
+        }
+    }, 100); // Small delay to ensure DOM is ready
 }
 
 const btnCamCand = document.getElementById("settings-btn-cam-candidate");
@@ -1373,57 +1840,108 @@ if (btnCamCand) {
     });
 }
 
-const btnSaveSettings = document.getElementById("settings-btn-save");
-if (btnSaveSettings) {
-    btnSaveSettings.addEventListener("click", () => {
-        const gazeSensitivity = document.getElementById("settings-gaze-sensitivity").value;
-        const allowedTabSwitches = parseInt(document.getElementById("settings-tab-switches").value) || 3;
-        const gazeCheck = document.getElementById("settings-check-gaze").checked;
-        const audioCheck = document.getElementById("settings-check-audio").checked;
-        const vmCheck = document.getElementById("settings-check-vm").checked;
-        const dualMonitorCheck = document.getElementById("settings-check-monitor").checked;
-        const devToolsCheck = document.getElementById("settings-check-devtools").checked;
-        const clipboardCheck = document.getElementById("settings-check-clipboard").checked;
+function initSaveSettings() {
+    // Wait for DOM to be fully loaded
+    setTimeout(() => {
+        const btnSaveSettings = document.getElementById("settings-btn-save");
+        if (btnSaveSettings) {
+            btnSaveSettings.addEventListener("click", () => {
+                console.log("[Settings] Save settings button clicked");
+                
+                const gazeSensitivityEl = document.getElementById("settings-gaze-sensitivity");
+                const tabSwitchesEl = document.getElementById("settings-tab-switches");
+                const gazeCheckEl = document.getElementById("settings-check-gaze");
+                const audioCheckEl = document.getElementById("settings-check-audio");
+                const vmCheckEl = document.getElementById("settings-check-vm");
+                const monitorCheckEl = document.getElementById("settings-check-monitor");
+                const devToolsCheckEl = document.getElementById("settings-check-devtools");
+                const clipboardCheckEl = document.getElementById("settings-check-clipboard");
+                
+                const gazeSensitivity = gazeSensitivityEl ? gazeSensitivityEl.value : "medium";
+                const allowedTabSwitches = tabSwitchesEl ? parseInt(tabSwitchesEl.value) || 3 : 3;
+                const gazeCheck = gazeCheckEl ? gazeCheckEl.checked : true;
+                const audioCheck = audioCheckEl ? audioCheckEl.checked : true;
+                const vmCheck = vmCheckEl ? vmCheckEl.checked : true;
+                const dualMonitorCheck = monitorCheckEl ? monitorCheckEl.checked : true;
+                const devToolsCheck = devToolsCheckEl ? devToolsCheckEl.checked : true;
+                const clipboardCheck = clipboardCheckEl ? clipboardCheckEl.checked : true;
 
-        window.proctoringSettings = {
-            gazeSensitivity,
-            allowedTabSwitches,
-            gazeCheck,
-            audioCheck,
-            vmCheck,
-            dualMonitorCheck,
-            devToolsCheck,
-            clipboardCheck
-        };
+                window.proctoringSettings = {
+                    gazeSensitivity,
+                    allowedTabSwitches,
+                    gazeCheck,
+                    audioCheck,
+                    vmCheck,
+                    dualMonitorCheck,
+                    devToolsCheck,
+                    clipboardCheck
+                };
 
-        // Emit over socket
-        if (socket && socket.connected) {
-            socket.emit("settings_update", {
-                meetingId: MEETING_ID,
-                settings: window.proctoringSettings
+                console.log("[Settings] Updated proctoring settings:", window.proctoringSettings);
+
+                // Emit over socket
+                if (socket && socket.connected) {
+                    socket.emit("settings_update", {
+                        meetingId: MEETING_ID,
+                        settings: window.proctoringSettings
+                    });
+                    console.log("[Settings] Settings update emitted via socket");
+                }
+
+                UI_UPDATER.addAuditAlert(
+                    "Settings Updated",
+                    "Host updated proctoring configuration settings.",
+                    "Moderator Control"
+                );
+
+                const settingsModal = document.getElementById("settings-modal");
+                if (settingsModal) {
+                    settingsModal.classList.remove("open");
+                    console.log("[Settings] Settings modal closed");
+                }
             });
+        } else {
+            console.warn("[Settings] Save button not found");
         }
-
-        UI_UPDATER.addAuditAlert(
-            "Settings Updated",
-            "Host updated proctoring configuration settings.",
-            "Moderator Control"
-        );
-
-        if (settingsModal) {
-            settingsModal.classList.remove("open");
-        }
-    });
+    }, 100); // Small delay to ensure DOM is ready
 }
 
-function copyMeetingInvite() {
+async function copyMeetingInvite() {
     const meetingId = typeof MEETING_ID !== 'undefined' ? MEETING_ID : "ROD-8821-X-V6";
     const hostName = "Interviewer";
     const timeString = new Date().toLocaleString(undefined, { 
         weekday: 'long', year: 'numeric', month: 'long', 
         day: 'numeric', hour: '2-digit', minute:'2-digit' 
     });
-    const joinUrl = `${window.location.origin}/login/candidate?room=${meetingId}`;
+
+    // The candidate link MUST be the HMAC-signed /meet/<id>?sig=...&expires=...
+    // URL — a plain /login/candidate link 403s because it lacks the verified
+    // session cookie set by the signed-link route.
+    let joinUrl = "";
+    try {
+        const res = await fetch(apiUrl(`/api/room/${encodeURIComponent(meetingId)}/invite`));
+        if (res.ok) {
+            const data = await res.json();
+            if (data.link) joinUrl = `${window.location.origin}${data.link}`;
+        }
+    } catch (e) {
+        console.warn("Failed to fetch signed invite link:", e);
+    }
+    if (!joinUrl) {
+        // Never copy an unsigned link — it would 403 for the candidate. Surface
+        // the failure instead of handing out a broken invitation.
+        if (typeof showBanner !== "undefined") {
+            showBanner(
+                "Invite unavailable",
+                "Could not generate the signed invitation link. Check that the backend is running and try again.",
+                "System",
+                "warning",
+            );
+        } else {
+            alert("Could not generate the invitation link. Check that the backend is running.");
+        }
+        return;
+    }
     
     const inviteText = `${hostName} is inviting you to a scheduled Intervue meeting.\n\nTopic: Technical Interview\nTime: ${timeString}\n\nJoin Intervue Meeting\n${joinUrl}\n\nMeeting ID: ${meetingId}`;
     

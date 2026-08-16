@@ -1,56 +1,57 @@
 // ─── Multi-Signal AI (Audio Features) ───
-let audioContext, analyser, microphone;
-let currentVoiceVolume = 0;
+let currentVoiceVolume = 0; // 0-100, updated each AFP run from adjusted RMS
 
 function isCandidateProctoringRole() {
     return typeof userRole !== "undefined" && userRole === "candidate";
 }
 
 function setupAudioAnalysis(stream) {
+    console.log("[Audio] Setting up audio analysis for role:", userRole);
+    // Audio analysis runs on candidate side and broadcasts to host via socket
     if (!isCandidateProctoringRole()) {
-        console.log("[AudioAnalysis] Suppressed for non-candidate role");
+        console.log("[Audio] Audio analysis runs on candidate side only. Host receives data via socket.");
         return;
     }
-    try {
-        const AudioCtx = window.AudioContext || window.webkitAudioContext;
-        audioContext = new AudioCtx();
-        analyser = audioContext.createAnalyser();
-        microphone = audioContext.createMediaStreamSource(stream);
-        microphone.connect(analyser);
-        
-        analyser.fftSize = 256;
-        const bufferLength = analyser.frequencyBinCount;
-        const dataArray = new Uint8Array(bufferLength);
-
-        setInterval(() => {
-            analyser.getByteFrequencyData(dataArray);
-            let sum = 0;
-            for (let i = 0; i < bufferLength; i++) sum += dataArray[i];
-            currentVoiceVolume = sum / bufferLength;
-            
-            // Render to Audio Bars if Interviewer
-            if (audioBars) {
-                const height = Math.min(100, Math.max(10, currentVoiceVolume * 2));
-                audioBars.style.height = `${height}%`;
-            }
-        }, 500);
-    } catch (e) {
-        console.warn("Audio analysis failed to start:", e);
-    }
+    
+    // Initialize Audio Fingerprinting for candidate
+    initAudioFingerprinting();
 }
 
 // ─── Multi-Signal AI (Confidence Scoring) ───
+// Combined confidence = attention (gaze) + voice + multi-signal agreement from
+// the fusion layer (see ui.js). The detection-confidence term drops as
+// independent cheating signals — each with its own per-detector confidence —
+// agree inside the fusion window, so a lone weak signal can't tank the gauge.
 setInterval(() => {
-    if (!ML_CONFIG.isProcessing || !totalGazeFrames) return;
+    // For host, run this even if ML processing is not active locally (host receives data via socket)
+    if (userRole !== "candidate" && userRole !== "host" && userRole !== "interviewer") return;
+    if (userRole === "candidate" && (!ML_CONFIG.isProcessing || !totalGazeFrames)) return;
     
     // Gaze Score (100% minus the percentage of time looking away)
     const gazeScore = Math.max(0, 100 - ((lookAwayFrames / totalGazeFrames) * 100));
     
-    // Voice Score (normalized volume)
-    const voiceScore = Math.min(100, Math.max(0, currentVoiceVolume * 2));
+    // Voice Score (normalized volume — currentVoiceVolume is already 0-100)
+    const voiceScore = Math.min(100, Math.max(0, currentVoiceVolume));
     
-    // Multi-Signal Fusion (70% Gaze, 30% Voice)
-    const confidenceScore = (gazeScore * 0.7) + (voiceScore * 0.3);
+    // Detection confidence from the fusion window: each distinct active signal
+    // pulls it down proportionally to (100 - its confidence).
+    const nowTs = Date.now();
+    const active = (window.signalLog || []).filter(
+        (e) => nowTs - e.t <= 60000 && e.s && e.s !== "fusion",
+    );
+    const seen = new Set();
+    let penalty = 0;
+    for (const e of active) {
+        if (seen.has(e.s)) continue;
+        seen.add(e.s);
+        penalty += (100 - e.c) * 0.4;
+    }
+    const detectionConfidence = Math.max(0, Math.min(100, 100 - penalty));
+    
+    // Fused score: attention 50%, agreement 30%, voice 20%
+    const confidenceScore = Math.round(
+        gazeScore * 0.5 + detectionConfidence * 0.3 + voiceScore * 0.2,
+    );
     
     const confidenceEl = document.getElementById("insight-confidence");
     if (confidenceEl) {
@@ -67,6 +68,7 @@ let tabSwitchCount = 0;
 const tabSwitchTimes = [];
 let windowBlurCount = 0;
 let copyPasteCount = 0;
+let lastAudioMetricsEmitAt = 0;
 
 const badgeFocus = document.getElementById("badge-focus");
 const badgeFocusLabel = document.getElementById("badge-focus-label");
@@ -234,17 +236,50 @@ function updateBrowserStatsUI() {
     }
 }
 
-// -- Extension check (basic heuristic) --
+// -- Extension check (enhanced heuristic) --
 function checkExtensions() {
     if (!isCandidateProctoringRole()) return;
+    console.log("[Extension] Checking for suspicious browser extensions");
+    
     const suspiciousGlobals = [
         "__REACT_DEVTOOLS_GLOBAL_HOOK__",
         "__VUE_DEVTOOLS_GLOBAL_HOOK__",
         "openAIExtension",
         "chatGPTExtension",
+        "ngDevtools",
+        "__ANGULAR_DEVTOOLS_GLOBAL_HOOK__",
+        "EMMET_DEVTOOLS_GLOBAL_HOOK__"
     ];
-    const found = suspiciousGlobals.filter((g) => g in window);
-    if (found.length > 0) {
+    
+    const suspiciousAPIs = [
+        "chrome.extension",
+        "browser.extension",
+        "chrome.runtime",
+        "browser.runtime"
+    ];
+    
+    const foundGlobals = suspiciousGlobals.filter((g) => g in window);
+    const foundAPIs = suspiciousAPIs.filter(api => {
+        try {
+            const parts = api.split('.');
+            let obj = window;
+            for (const part of parts) {
+                if (obj[part]) {
+                    obj = obj[part];
+                } else {
+                    return false;
+                }
+            }
+            return true;
+        } catch (e) {
+            return false;
+        }
+    });
+    
+    const allFound = [...foundGlobals, ...foundAPIs];
+    
+    if (allFound.length > 0) {
+        console.warn("[Extension] Suspicious extensions detected:", allFound);
         setBadge(
             badgeExt,
             badgeExtLabel,
@@ -255,11 +290,15 @@ function checkExtensions() {
         );
         UI_UPDATER.addAuditAlert(
             "Browser extension detected",
-            `Suspicious globals found: ${found.join(", ")}.`,
+            `Suspicious extensions/APIs found: ${allFound.join(", ")}.`,
             "Extension monitor",
             true,
         );
+        
+        // Implement page locking for candidates
+        lockCandidatePage();
     } else {
+        console.log("[Extension] No suspicious extensions detected");
         setBadge(
             badgeExt,
             badgeExtLabel,
@@ -269,6 +308,72 @@ function checkExtensions() {
             null,
         );
     }
+}
+
+// -- Candidate Page Locking --
+function lockCandidatePage() {
+    if (!isCandidateProctoringRole()) return;
+    console.log("[Security] Locking candidate page due to security violation");
+    
+    // Disable common keyboard shortcuts
+    document.addEventListener('keydown', function(e) {
+        // Prevent F12, Ctrl+Shift+I, Ctrl+Shift+J, Ctrl+U
+        if (e.key === 'F12' || 
+            (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'J')) ||
+            (e.ctrlKey && e.key === 'U')) {
+            e.preventDefault();
+            e.stopPropagation();
+            UI_UPDATER.addAuditAlert(
+                "Developer tools blocked",
+                "Candidate attempted to open developer tools",
+                "Security lock",
+                true
+            );
+        }
+    }, true);
+    
+    // Disable right-click
+    document.addEventListener('contextmenu', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        UI_UPDATER.addAuditAlert(
+            "Context menu blocked",
+            "Candidate attempted to open context menu",
+            "Security lock",
+            false
+        );
+    }, true);
+    
+    // Disable drag and drop
+    document.addEventListener('dragstart', function(e) {
+        e.preventDefault();
+    }, true);
+    
+    // Detect devtools opening
+    const devtoolsDetector = setInterval(() => {
+        const threshold = 160;
+        const widthThreshold = window.outerWidth - window.innerWidth > threshold;
+        const heightThreshold = window.outerHeight - window.innerHeight > threshold;
+        
+        if (widthThreshold || heightThreshold) {
+            console.warn("[Security] DevTools detected!");
+            UI_UPDATER.addAuditAlert(
+                "Developer tools detected",
+                "Candidate opened browser developer tools",
+                "Security violation",
+                true
+            );
+            
+            // Optionally redirect or lock further
+            if (window.proctoringSettings && window.proctoringSettings.devToolsCheck) {
+                document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#1a1a2e;color:#fff;font-family:sans-serif;text-align:center;"><div><h1>🔒 Security Violation</h1><p>Developer tools were detected. This session has been terminated.</p><p>Please contact your interviewer.</p></div></div>';
+                clearInterval(devtoolsDetector);
+            }
+        }
+    }, 1000);
+    
+    // Store detector ID for cleanup
+    window._devtoolsDetector = devtoolsDetector;
 }
 
 // -- Shield status: updates when gaze + camera are both active --
@@ -357,7 +462,12 @@ function initAudioFingerprinting() {
     }
 
     try {
+        // Resume AudioContext if suspended (browser autoplay policy)
         AFP.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        if (AFP.audioContext.state === 'suspended') {
+            AFP.audioContext.resume();
+        }
+        
         AFP.analyser     = AFP.audioContext.createAnalyser();
 
         AFP.analyser.fftSize               = AFP.FFT_SIZE;
@@ -370,7 +480,7 @@ function initAudioFingerprinting() {
         AFP.isRunning = true;
         AFP.intervalId = setInterval(runAFPAnalysis, AFP.ANALYSIS_INTERVAL);
 
-        console.log("[AFP] Audio fingerprinting started");
+        console.log("[AFP] Audio fingerprinting started with sample rate:", AFP.audioContext.sampleRate);
     } catch(err) {
         console.error("[AFP] Init failed:", err);
     }
@@ -387,14 +497,22 @@ function stopAudioFingerprinting() {
 
 // ─── Main Analysis Loop ───────────────────────────────────────────────────────
 function runAFPAnalysis() {
-    if (!AFP.analyser || !AFP.isRunning) return;
+    if (!AFP.analyser || !AFP.isRunning) {
+        console.warn("[AFP] Analysis skipped - analyser or running state invalid");
+        return;
+    }
 
     const bufferLength  = AFP.analyser.frequencyBinCount;  // FFT_SIZE / 2
     const freqData      = new Float32Array(bufferLength);  // dB values
     const timeData      = new Float32Array(bufferLength);  // waveform
 
-    AFP.analyser.getFloatFrequencyData(freqData);
-    AFP.analyser.getFloatTimeDomainData(timeData);
+    try {
+        AFP.analyser.getFloatFrequencyData(freqData);
+        AFP.analyser.getFloatTimeDomainData(timeData);
+    } catch (e) {
+        console.error("[AFP] Error getting audio data:", e);
+        return;
+    }
 
     // ── 1. RMS Energy ─────────────────────────────────────────────────────────
     const rms = computeRMS(timeData);
@@ -414,6 +532,9 @@ function runAFPAnalysis() {
     // ── 3. Voice Activity ─────────────────────────────────────────────────────
     const adjustedRMS    = Math.max(0, rms - AFP.noiseFloor);
     const isVoiceActive  = adjustedRMS > AFP.VOICE_THRESHOLD;
+
+    // Shared volume signal (was computed by the removed second analyser loop)
+    currentVoiceVolume = Math.min(100, Math.max(0, adjustedRMS * 2000));
     const isWhispering   = adjustedRMS > AFP.WHISPER_THRESHOLD &&
                            adjustedRMS < AFP.VOICE_THRESHOLD;
     const isSilent       = adjustedRMS < AFP.SILENCE_THRESHOLD;
@@ -766,6 +887,8 @@ function updateAFPUI(results) {
         bandEnergies,
     } = results;
 
+    console.log("[AFP] Updating audio UI - RMS:", rms.toFixed(4), "Voice Active:", isVoiceActive);
+
     // ── Voice level bar ───────────────────────────────────────────────────────
     const level        = Math.min(100, Math.round(rms * 2000));
     const voiceBar     = document.getElementById('voice-level-bar');
@@ -796,18 +919,28 @@ function updateAFPUI(results) {
         }`;
     }
 
+    // ── Emit to host via socket (candidate only) ─────────────────────────────
     if (userRole === "candidate" && socket && socket.connected) {
-        const voiceStatus  = document.getElementById('voice-status');
-        const pitchEl      = document.getElementById('voice-pitch');
-        socket.emit("audio_metrics_update", {
+        const emitNow = Date.now();
+        if (emitNow - lastAudioMetricsEmitAt < 2000) return; // 2s throttle
+        lastAudioMetricsEmitAt = emitNow;
+        
+        const voiceStatusEl = document.getElementById('voice-status');
+        const pitchElUI = document.getElementById('voice-pitch');
+        const stressElUI = document.getElementById('voice-stress');
+        
+        const audioData = {
             meetingId: MEETING_ID,
             level: level,
-            voiceStatusText: voiceStatus ? voiceStatus.textContent : "Waiting",
-            voiceStatusClass: voiceStatus ? voiceStatus.className : "value gray",
-            pitchText: (pitchEl && pitch > 0) ? pitchEl.textContent : "-- Hz",
-            stressText: (stressEl && stress) ? stressEl.textContent : "Low",
-            stressClass: (stressEl && stress) ? stressEl.className : "value green"
-        });
+            voiceStatusText: voiceStatusEl ? voiceStatusEl.textContent : "Waiting",
+            voiceStatusClass: voiceStatusEl ? voiceStatusEl.className : "value gray",
+            pitchText: (pitchElUI && pitch > 0) ? pitchElUI.textContent : "-- Hz",
+            stressText: (stressElUI && stress) ? stressElUI.textContent : "Low",
+            stressClass: (stressElUI && stress) ? stressElUI.className : "value green"
+        };
+        
+        console.log("[AFP] Emitting audio metrics to host:", audioData);
+        socket.emit("audio_metrics_update", audioData);
     }
 }
 
@@ -844,79 +977,169 @@ function handleAFPAlerts(results) {
             isCritical
         );
 
-        // Bump suspicious event counter
-        if (typeof suspiciousGazeEvents !== 'undefined') {
-            suspiciousGazeEvents += Math.floor(data.riskDelta / 10);
-            const riskScore = Math.max(0, Math.min(100, 20 + suspiciousGazeEvents * 6));
-            UI_UPDATER.updateRiskScore(riskScore);
-        }
+        // Unified risk engine: weight = detector's riskDelta. AFP heuristics
+        // (spectral flatness, pitch variance) are noisy — medium confidence.
+        if (typeof bumpRisk !== 'undefined') bumpRisk(data.riskDelta, 'audio', 60);
     });
 }
 
 // ─── Hook into existing webcam start ─────────────────────────────────────────
 let livenessMonitorTimer = null;
 let lastLivenessAlertAt = 0;
+let faceLostSince = 0; // timestamp when continuous face loss began
+let lastLivenessFace = false; // whether the most recent liveness frame had a face
+let challengeFailStreak = 0;  // consecutive unanswered liveness challenges
+let lastChallengeStatus = "idle"; // previous verdict, to count transitions once
+let lastChallengeAt = 0;
+let livenessChallengeDelay = 90000; // first challenge ~90s in, then 90-180s
 
-function captureLivenessFrame() {
-    if (!videoElement || videoElement.videoWidth === 0 || videoElement.videoHeight === 0) {
-        return null;
-    }
+// Reset per-session challenge state (called from ui.js when a session starts)
+// so one candidate's fail streak never leaks into the next interview.
+window.resetLivenessChallengeState = () => {
+    challengeFailStreak = 0;
+    lastChallengeStatus = "idle";
+    lastChallengeAt = 0;
+    livenessChallengeDelay = 90000;
+};
 
-    const canvas = document.createElement("canvas");
-    canvas.width = 320;
-    canvas.height = 240;
-    const ctx = canvas.getContext("2d");
-    ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL("image/jpeg", 0.72);
-}
-
-async function runLivenessCheck() {
+// ─── Liveness verdict handling (combined /analyze path) ───────────────────────
+// The backend computes liveness inside the /analyze response (one MediaPipe
+// pass, one HTTP request — see gaze.js) and this consumes it. It carries the
+// same challenge / face-loss / presentation-attack logic the old standalone
+// /liveness-frame loop had, minus the duplicated inference + request.
+window.handleLivenessResult = function handleLivenessResult(liveness) {
+    if (!liveness) return;
     if (!isCandidateProctoringRole()) return;
     if (!window.proctoringSettings.gazeCheck) return;
 
-    const image = captureLivenessFrame();
-    if (!image) return;
+    const now = Date.now();
 
-    try {
-        const response = await fetch(apiUrl("/liveness-frame"), {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ meetingId: MEETING_ID, image })
-        });
+    lastLivenessFace = liveness.faceDetected === true;
 
-        if (!response.ok) return;
-
-        const result = await response.json();
-        const isSuspicious = result.risk === "high" || result.risk === "medium" || result.is_live === false;
-        if (!isSuspicious) return;
-
-        const now = Date.now();
-        if (now - lastLivenessAlertAt < 20000) return;
-        lastLivenessAlertAt = now;
-
-        const confidence = Math.round((result.confidence || 0) * 100);
-        const message = `Liveness risk: ${result.risk}. Reason: ${result.reason || "unknown"}. Confidence: ${confidence}%`;
-
-        UI_UPDATER.addAuditAlert(
-            "Presentation Attack Warning",
-            message,
-            "Face Liveness",
-            result.risk === "high"
-        );
-
-        if (typeof suspiciousGazeEvents !== "undefined") {
-            suspiciousGazeEvents += result.risk === "high" ? 10 : 4;
-            UI_UPDATER.updateRiskScore(Math.min(100, 20 + suspiciousGazeEvents * 6));
+    // Liveness challenge verdict: /liveness-challenge issues a random
+    // blink/head prompt; the backend reports a resolved verdict until the
+    // next challenge, so only count a verdict on status TRANSITION.
+    const ch = liveness.challenge;
+    if (ch && ch.status !== lastChallengeStatus) {
+        lastChallengeStatus = ch.status;
+        if (ch.status === "passed") {
+            challengeFailStreak = 0;
+            if (typeof showBanner !== "undefined") {
+                showBanner(
+                    "Liveness check passed",
+                    "The candidate responded to the liveness prompt.",
+                    "Face Liveness",
+                    "success",
+                );
+            }
+        } else if (ch.status === "failed") {
+            challengeFailStreak++;
+            UI_UPDATER.addAuditAlert(
+                "Liveness Challenge Failed",
+                "Candidate did not respond to the liveness prompt (blink or head move).",
+                "Face Liveness",
+                challengeFailStreak >= 2,
+            );
+            if (challengeFailStreak >= 2 && typeof bumpRisk !== "undefined") {
+                bumpRisk(10, "liveness", 85);
+            }
         }
-    } catch (e) {
-        console.warn("Liveness check failed:", e);
     }
+
+    // Sustained face loss: a brief glance away / hand in front of the
+    // camera is normal (and face_not_detected must NOT spam), but
+    // ~25s+ with no face means the candidate left the camera entirely.
+    if (liveness.reason === "face_not_detected") {
+        if (!faceLostSince) faceLostSince = now;
+        const lostFor = now - faceLostSince;
+        if (lostFor >= 25000 && now - lastLivenessAlertAt >= 60000) {
+            lastLivenessAlertAt = now;
+            UI_UPDATER.addAuditAlert(
+                "Candidate Face Not Visible",
+                `No face detected for ${Math.round(lostFor / 1000)}s — candidate may have left the camera.`,
+                "Face Liveness",
+                true
+            );
+            if (typeof bumpRisk !== "undefined") bumpRisk(8, "liveness", 80);
+        }
+        return;
+    }
+    faceLostSince = 0;
+
+    // Alert only on explicit high risk (photo / screen replay / dark / blur).
+    // "Medium" states such as awaiting_blink (calibration window) and
+    // face_not_detected (brief glance away / hand in front of camera) stay
+    // quiet — face_not_detected has is_live=false but must NOT alert.
+    if (liveness.risk !== "high") return;
+
+    if (now - lastLivenessAlertAt < 20000) return;
+    lastLivenessAlertAt = now;
+
+    const confidence = Math.round((liveness.confidence || 0) * 100);
+    const message = `Liveness risk: ${liveness.risk}. Reason: ${liveness.reason || "unknown"}. Confidence: ${confidence}%`;
+
+    UI_UPDATER.addAuditAlert(
+        "Presentation Attack Warning",
+        message,
+        "Face Liveness",
+        true
+    );
+
+    if (typeof bumpRisk !== "undefined") {
+        // Liveness reports its own confidence (0-1); high-risk verdicts are
+        // 0.70-0.90, so a static-face / no-blink finding carries strong weight.
+        const conf = liveness.confidence
+            ? Math.round(liveness.confidence * 100)
+            : 90;
+        bumpRisk(liveness.risk === "high" ? 12 : 4, "liveness", conf);
+    }
+};
+
+// Random liveness challenge scheduler: every 90-180s (when the session is
+// active, the camera is on, and a face is visible) ask the candidate — subtly,
+// on their own screen — to blink or turn their head, then verify the response
+// via the backend. A photo or screen replay cannot react to a prompt on cue.
+function maybeIssueLivenessChallenge() {
+    if (!isCandidateProctoringRole()) return;
+    if (!window.sessionActive) return;
+    if (!window.proctoringSettings || !window.proctoringSettings.gazeCheck) return;
+    if (!lastLivenessFace) return; // pointless without a visible face
+
+    const now = Date.now();
+    if (now - lastChallengeAt < livenessChallengeDelay) return;
+
+    const type = Math.random() < 0.5 ? "blink" : "head";
+    lastChallengeAt = now;
+    livenessChallengeDelay = 90000 + Math.floor(Math.random() * 90000);
+
+    fetch(apiUrl("/liveness-challenge"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ meetingId: MEETING_ID, type }),
+    })
+        .then((r) => r.json())
+        .then((data) => {
+            if (!data || data.error) return;
+            if (typeof showBanner !== "undefined") {
+                showBanner(
+                    "Liveness check",
+                    type === "blink"
+                        ? "Please blink now."
+                        : "Please turn your head slightly.",
+                    "Face Liveness",
+                    "info",
+                );
+            }
+        })
+        .catch(() => {});
 }
 
 function startLivenessMonitoring() {
     if (livenessMonitorTimer) return;
-    runLivenessCheck();
-    livenessMonitorTimer = setInterval(runLivenessCheck, 5000);
+    // Frame analysis (gaze + liveness) is driven by the ML loop in gaze.js at
+    // ~1 fps through the combined /analyze request — no separate liveness
+    // timer. This timer only checks whether a random challenge is due.
+    livenessMonitorTimer = setInterval(maybeIssueLivenessChallenge, 10000);
 }
 
 videoElement.addEventListener('playing', () => {
@@ -966,10 +1189,8 @@ async function checkNetworkSecurity() {
                 true
             );
             // Severe Risk Spike
-            if (typeof suspiciousGazeEvents !== 'undefined') {
-                suspiciousGazeEvents += 15;
-                UI_UPDATER.updateRiskScore(100);
-            }
+            // Severe: weight 50 pins the gauge near HIGH immediately
+            if (typeof bumpRisk !== 'undefined') bumpRisk(50, 'network', 95);
         } else {
             console.log(`[Network] Secure connection from ${analysis.location} via ${analysis.isp}`);
         }
@@ -1078,10 +1299,7 @@ function analyzeTypingRhythm() {
             TypingBiometrics.keyDwells = [];
             TypingBiometrics.keyFlights = [];
             
-            if (typeof suspiciousGazeEvents !== 'undefined') {
-                suspiciousGazeEvents += 3;
-                UI_UPDATER.updateRiskScore(Math.min(100, 20 + suspiciousGazeEvents * 6));
-            }
+            if (typeof bumpRisk !== 'undefined') bumpRisk(6, 'typing', 40);
         }
     }
 }
@@ -1103,10 +1321,7 @@ function initBrowserForensics() {
                     "OS Forensics",
                     true
                 );
-                if (typeof suspiciousGazeEvents !== 'undefined') {
-                    suspiciousGazeEvents += 15;
-                    UI_UPDATER.updateRiskScore(Math.min(100, 20 + suspiciousGazeEvents * 6));
-                }
+                if (typeof bumpRisk !== 'undefined') bumpRisk(15, 'focus', 70);
             }
         }
     });
@@ -1139,10 +1354,7 @@ function initBrowserForensics() {
                 "OS Forensics",
                 true
             );
-            if (typeof suspiciousGazeEvents !== 'undefined') {
-                suspiciousGazeEvents += 20;
-                UI_UPDATER.updateRiskScore(Math.min(100, 20 + suspiciousGazeEvents * 6));
-            }
+            if (typeof bumpRisk !== 'undefined') bumpRisk(20, 'clipboard', 80);
         }
     });
 
@@ -1207,10 +1419,7 @@ function initAdvancedHardwareForensics() {
                                 "Hardware Forensics",
                                 true
                             );
-                            if (typeof suspiciousGazeEvents !== 'undefined') {
-                                suspiciousGazeEvents += 25;
-                                UI_UPDATER.updateRiskScore(Math.min(100, 20 + suspiciousGazeEvents * 6));
-                            }
+                            if (typeof bumpRisk !== 'undefined') bumpRisk(25, 'hardware', 90);
                             break;
                         }
                     }
@@ -1299,10 +1508,7 @@ function initUltimateEdgeCases() {
                 true
             );
             devToolsAlerted = true;
-            if (typeof suspiciousGazeEvents !== 'undefined') {
-                suspiciousGazeEvents += 30;
-                UI_UPDATER.updateRiskScore(Math.min(100, 20 + suspiciousGazeEvents * 6));
-            }
+            if (typeof bumpRisk !== 'undefined') bumpRisk(30, 'devtools', 85);
         }
     }, 2000);
 

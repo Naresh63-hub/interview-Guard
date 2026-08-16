@@ -1,11 +1,12 @@
 {
   "manifest_version": 3,
   "name": "InterviewOS Proctoring Guard",
-  "version": "1.0.0",
-  "description": "Enforces strict proctoring guidelines during exams and interviews.",
+  "version": "2.0.0",
+  "description": "Enforces strict proctoring guidelines during exams and interviews with kiosk mode.",
   "permissions": [
     "activeTab",
-    "tabs"
+    "tabs",
+    "fullscreen"
   ],
   "action": {
     "default_popup": "popup.html"
@@ -17,10 +18,16 @@
     {
       "matches": [
         "http://localhost:5000/*",
-        "https://127.0.0.1:5000/*"
+        "https://127.0.0.1:5000/*",
+        "https://*.intervue.com/*"
       ],
       "js": ["content.js"],
-      "run_at": "document_start"
+      "run_at": "document_start",
+      "all_frames": true
     }
+  ],
+  "host_permissions": [
+    "http://localhost:5000/*",
+    "https://127.0.0.1:5000/*"
   ]
 }

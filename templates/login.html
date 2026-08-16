@@ -1,26 +1,910 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-    <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>Intervue</title>
-        <link rel="icon" href="data:,">
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
-        <script src="https://unpkg.com/@phosphor-icons/web"></script>
-        <link rel="stylesheet" href="/static/styles.css" />
-    </head>
-    <body class="intervue-theme">
-        <div class="intervue-container">
-            <div class="intervue-logo">
-                <i class="ph-fill ph-eye"></i><i class="ph-fill ph-shield-check" style="color: #3b82f6; margin-left: -0.5rem;"></i>
-                Intervue
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Intervue - Login</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body.intervue-theme {
+            background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            padding: 20px;
+            color: #ffffff;
+        }
+        
+        /* Custom scrollbar */
+        body.intervue-theme::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        body.intervue-theme::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 4px;
+        }
+        
+        body.intervue-theme::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+        }
+        
+        body.intervue-theme::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+        
+        .intervue-container {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(20px);
+            border-radius: 24px;
+            padding: 36px;
+            width: 100%;
+            max-width: 520px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        
+        .intervue-container::-webkit-scrollbar {
+            width: 6px;
+        }
+        
+        .intervue-container::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 3px;
+        }
+        
+        .intervue-container::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 3px;
+        }
+        
+        .intervue-container::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.25);
+        }
+        
+        .intervue-logo {
+            text-align: center;
+            margin-bottom: 24px;
+            font-size: 2.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #5568d3 0%, #6a4c93 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .intervue-logo i {
+            margin-right: 8px;
+            color: #5568d3;
+        }
+        
+        .intervue-tabs {
+            display: flex;
+            margin-bottom: 24px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 6px;
+            gap: 6px;
+        }
+        
+        .intervue-tab {
+            flex: 1;
+            padding: 14px;
+            text-align: center;
+            cursor: pointer;
+            border-radius: 10px;
+            color: rgba(255, 255, 255, 0.6);
+            transition: all 0.3s ease;
+            font-weight: 500;
+            font-size: 0.95rem;
+            border: none;
+            background: transparent;
+        }
+        
+        .intervue-tab.active {
+            background: linear-gradient(135deg, #5568d3 0%, #6a4c93 100%);
+            color: white;
+            box-shadow: 0 4px 15px rgba(85, 104, 211, 0.4);
+        }
+        
+        .intervue-tab:hover:not(.active) {
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+        }
+        
+        .intervue-tab-content {
+            display: none;
+            max-height: 50vh;
+            overflow-y: auto;
+            padding-right: 4px;
+        }
+        
+        .intervue-tab-content::-webkit-scrollbar {
+            width: 4px;
+        }
+        
+        .intervue-tab-content::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 2px;
+        }
+        
+        .intervue-tab-content::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 2px;
+        }
+        
+        .intervue-tab-content.active {
+            display: block;
+        }
+        
+        .intervue-form-group {
+            margin-bottom: 18px;
+        }
+        
+        .intervue-form-group label {
+            display: block;
+            color: rgba(255, 255, 255, 0.8);
+            margin-bottom: 10px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            letter-spacing: 0.5px;
+        }
+        
+        .intervue-input {
+            width: 100%;
+            padding: 16px 20px;
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 12px;
+            color: white;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+            box-sizing: border-box;
+            font-family: 'Inter', sans-serif;
+        }
+        
+        .intervue-input:focus {
+            outline: none;
+            border-color: #5568d3;
+            background: rgba(255, 255, 255, 0.12);
+            box-shadow: 0 0 0 4px rgba(85, 104, 211, 0.2);
+        }
+        
+        .intervue-input::placeholder {
+            color: rgba(255, 255, 255, 0.4);
+        }
+        
+        .intervue-btn {
+            width: 100%;
+            padding: 16px;
+            background: linear-gradient(135deg, #5568d3 0%, #6a4c93 100%);
+            border: none;
+            border-radius: 12px;
+            color: white;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            font-family: 'Inter', sans-serif;
+            letter-spacing: 0.5px;
+        }
+        
+        .intervue-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 30px rgba(85, 104, 211, 0.4);
+        }
+        
+        .intervue-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .intervue-btn.secondary {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .intervue-btn.secondary:hover {
+            background: rgba(255, 255, 255, 0.15);
+        }
+        
+        .intervue-btn.social {
+            background: white;
+            color: #333;
+            margin-bottom: 12px;
+        }
+        
+        .intervue-btn.social:hover {
+            background: #f8f9fa;
+        }
+        
+        .intervue-btn.google {
+            background: #4285F4;
+            color: white;
+        }
+        
+        .intervue-btn.google:hover {
+            background: #357ae8;
+        }
+        
+        .intervue-btn.github {
+            background: #333;
+            color: white;
+        }
+        
+        .intervue-btn.github:hover {
+            background: #24292e;
+        }
+        
+        .intervue-error {
+            background: rgba(239, 68, 68, 0.15);
+            border: 1px solid rgba(239, 68, 68, 0.4);
+            color: #ef4444;
+            padding: 12px 16px;
+            border-radius: 12px;
+            margin-bottom: 18px;
+            font-size: 0.9rem;
+            display: none;
+        }
+        
+        .intervue-error.show {
+            display: block;
+        }
+        
+        .intervue-success {
+            background: rgba(34, 197, 94, 0.15);
+            border: 1px solid rgba(34, 197, 94, 0.4);
+            color: #22c55e;
+            padding: 12px 16px;
+            border-radius: 12px;
+            margin-bottom: 18px;
+            font-size: 0.9rem;
+            display: none;
+        }
+        
+        .intervue-success.show {
+            display: block;
+        }
+        
+        .intervue-loading {
+            display: none;
+            text-align: center;
+            color: rgba(255, 255, 255, 0.7);
+            margin-top: 16px;
+            font-size: 0.95rem;
+        }
+        
+        .intervue-loading.show {
+            display: block;
+        }
+        
+        .intervue-checkbox {
+            display: flex;
+            align-items: center;
+            margin-bottom: 18px;
+        }
+        
+        .intervue-checkbox input[type="checkbox"] {
+            width: auto;
+            margin-right: 12px;
+            cursor: pointer;
+            accent-color: #667eea;
+        }
+        
+        .intervue-checkbox label {
+            margin: 0;
+            cursor: pointer;
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 0.9rem;
+        }
+        
+        .intervue-info {
+            text-align: center;
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 0.85rem;
+            margin-top: 16px;
+            line-height: 1.6;
+        }
+        
+        .intervue-info a {
+            color: #5568d3;
+            text-decoration: none;
+            font-weight: 500;
+        }
+        
+        .intervue-info a:hover {
+            color: #6a4c93;
+            text-decoration: underline;
+        }
+        
+        .password-wrapper {
+            position: relative;
+        }
+        
+        .password-toggle {
+            position: absolute;
+            right: 16px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: none;
+            border: none;
+            color: rgba(255, 255, 255, 0.5);
+            cursor: pointer;
+            padding: 0;
+            font-size: 1.2rem;
+            transition: color 0.3s ease;
+        }
+        
+        .password-toggle:hover {
+            color: rgba(255, 255, 255, 0.8);
+        }
+        
+        .social-divider {
+            display: flex;
+            align-items: center;
+            margin: 20px 0;
+            color: rgba(255, 255, 255, 0.4);
+            font-size: 0.85rem;
+        }
+        
+        .social-divider::before,
+        .social-divider::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: rgba(255, 255, 255, 0.2);
+        }
+        
+        .social-divider span {
+            padding: 0 12px;
+        }
+        
+        .social-buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        
+        .social-icon {
+            margin-right: 10px;
+            font-size: 1.1rem;
+        }
+        
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .modal-overlay.show {
+            display: flex;
+        }
+        
+        .modal {
+            background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%);
+            border-radius: 24px;
+            padding: 40px;
+            width: 100%;
+            max-width: 450px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        }
+        
+        .modal h2 {
+            color: white;
+            margin: 0 0 20px 0;
+            font-size: 1.5rem;
+        }
+        
+        .modal p {
+            color: rgba(255, 255, 255, 0.7);
+            margin-bottom: 24px;
+            line-height: 1.6;
+        }
+        
+        .modal-buttons {
+            display: flex;
+            gap: 12px;
+            margin-top: 24px;
+        }
+        
+        .modal-buttons .intervue-btn {
+            flex: 1;
+        }
+    </style>
+</head>
+<body class="intervue-theme">
+    <div class="intervue-container">
+        <div class="intervue-logo">
+            <i class="ph-fill ph-eye"></i><i class="ph-fill ph-shield-check" style="color: #3b82f6; margin-left: -0.5rem;"></i>
+            Intervue
+        </div>
+        
+        <div class="intervue-tabs">
+            <button class="intervue-tab active" data-tab="signin">Create Meeting</button>
+            <button class="intervue-tab" data-tab="signup">Create Account</button>
+            <button class="intervue-tab" data-tab="candidate">Join Interview</button>
+        </div>
+        
+        <!-- Create Meeting Tab -->
+        <div class="intervue-tab-content active" id="signin-tab">
+            <div class="intervue-error" id="signin-error"></div>
+            
+            <!-- Social Login Buttons -->
+            <div class="social-buttons">
+                <button type="button" class="intervue-btn social google" onclick="socialLogin('google')">
+                    <i class="ph-fill ph-google-logo social-icon"></i> Continue with Google
+                </button>
+                <button type="button" class="intervue-btn social github" onclick="socialLogin('github')">
+                    <i class="ph-fill ph-github-logo social-icon"></i> Continue with GitHub
+                </button>
             </div>
             
-            <a href="/login/host" class="intervue-btn primary">Host a meeting (Sign in)</a>
-            <br>
-            <a href="/login/candidate" class="intervue-link">Join a meeting</a>
+            <div class="social-divider">
+                <span>or continue with email</span>
+            </div>
+            
+            <form id="signin-form">
+                <div class="intervue-form-group">
+                    <label for="signin-username">Username</label>
+                    <input type="text" id="signin-username" name="username" class="intervue-input" placeholder="Enter your username" required>
+                </div>
+                
+                <div class="intervue-form-group">
+                    <label for="signin-password">Password</label>
+                    <div class="password-wrapper">
+                        <input type="password" id="signin-password" name="password" class="intervue-input" placeholder="Enter your password" required>
+                        <button type="button" class="password-toggle" onclick="togglePassword('signin-password', this)">
+                            <i class="ph-fill ph-eye"></i>
+                        </button>
+                    </div>
+                    <div style="text-align: right; margin-top: 8px;">
+                        <a href="#" onclick="showForgotPassword(); return false;" style="color: #5568d3; font-size: 0.85rem; text-decoration: none;">Forgot Password?</a>
+                    </div>
+                </div>
+                
+                <div class="intervue-checkbox">
+                    <input type="checkbox" id="signin-remember" name="rememberMe">
+                    <label for="signin-remember">Remember me</label>
+                </div>
+                
+                <button type="submit" class="intervue-btn" id="signin-btn">
+                    <i class="ph-fill ph-video-camera"></i> Create Meeting
+                </button>
+            </form>
+            
+            <div class="intervue-loading" id="signin-loading">
+                <i class="ph-fill ph-spinner ph-spin"></i> Creating meeting...
+            </div>
         </div>
-    </body>
+        
+        <!-- Create Account Tab -->
+        <div class="intervue-tab-content" id="signup-tab">
+            <div class="intervue-error" id="signup-error"></div>
+            <div class="intervue-success" id="signup-success"></div>
+            
+            <!-- Social Signup Buttons -->
+            <div class="social-buttons">
+                <button type="button" class="intervue-btn social google" onclick="socialLogin('google')">
+                    <i class="ph-fill ph-google-logo social-icon"></i> Sign up with Google
+                </button>
+                <button type="button" class="intervue-btn social github" onclick="socialLogin('github')">
+                    <i class="ph-fill ph-github-logo social-icon"></i> Sign up with GitHub
+                </button>
+            </div>
+            
+            <div class="social-divider">
+                <span>or sign up with email</span>
+            </div>
+            
+            <form id="signup-form">
+                <div class="intervue-form-group">
+                    <label for="signup-fullname">Full Name</label>
+                    <input type="text" id="signup-fullname" name="fullName" class="intervue-input" placeholder="Enter your full name" required>
+                </div>
+                
+                <div class="intervue-form-group">
+                    <label for="signup-username">Username</label>
+                    <input type="text" id="signup-username" name="username" class="intervue-input" placeholder="Choose a username" required>
+                </div>
+                
+                <div class="intervue-form-group">
+                    <label for="signup-email">Email</label>
+                    <input type="email" id="signup-email" name="email" class="intervue-input" placeholder="Enter your email" required>
+                </div>
+                
+                <div class="intervue-form-group">
+                    <label for="signup-password">Password</label>
+                    <div class="password-wrapper">
+                        <input type="password" id="signup-password" name="password" class="intervue-input" placeholder="Create a password (min 8 characters)" required>
+                        <button type="button" class="password-toggle" onclick="togglePassword('signup-password', this)">
+                            <i class="ph-fill ph-eye"></i>
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="intervue-form-group">
+                    <label for="signup-confirm">Confirm Password</label>
+                    <div class="password-wrapper">
+                        <input type="password" id="signup-confirm" name="confirmPassword" class="intervue-input" placeholder="Confirm your password" required>
+                        <button type="button" class="password-toggle" onclick="togglePassword('signup-confirm', this)">
+                            <i class="ph-fill ph-eye"></i>
+                        </button>
+                    </div>
+                </div>
+                
+                <button type="submit" class="intervue-btn" id="signup-btn">
+                    <i class="ph-fill ph-user-plus"></i> Create Account
+                </button>
+            </form>
+            
+            <div class="intervue-loading" id="signup-loading">
+                <i class="ph-fill ph-spinner ph-spin"></i> Creating account...
+            </div>
+        </div>
+        
+        <!-- Quick Login Tab (Candidate) -->
+        <div class="intervue-tab-content" id="candidate-tab">
+            <div class="intervue-error" id="candidate-error"></div>
+            
+            <form id="candidate-form">
+                <div class="intervue-form-group">
+                    <label for="candidate-meeting">Meeting ID</label>
+                    <input type="text" id="candidate-meeting" name="meetingId" class="intervue-input" placeholder="Enter meeting ID (e.g., E7AF5BA2)" required>
+                </div>
+                
+                <div class="intervue-form-group">
+                    <label for="candidate-name">Your Name</label>
+                    <input type="text" id="candidate-name" name="candidateName" class="intervue-input" placeholder="Enter your name" required>
+                </div>
+                
+                <button type="submit" class="intervue-btn" id="candidate-btn">
+                    <i class="ph-fill ph-video-camera"></i> Join Interview
+                </button>
+            </form>
+            
+            <div class="intervue-loading" id="candidate-loading">
+                <i class="ph-fill ph-spinner ph-spin"></i> Joining...
+            </div>
+            
+            <div class="intervue-info">
+                Don't have a meeting ID? Contact your interviewer.
+            </div>
+        </div>
+    </div>
+    
+    <!-- Forgot Password Modal -->
+    <div class="modal-overlay" id="forgotPasswordModal">
+        <div class="modal">
+            <h2><i class="ph-fill ph-lock-key"></i> Forgot Password</h2>
+            <p>Enter your email address and we'll send you a link to reset your password.</p>
+            
+            <div class="intervue-form-group">
+                <label for="forgot-email">Email Address</label>
+                <input type="email" id="forgot-email" class="intervue-input" placeholder="Enter your email" required>
+            </div>
+            
+            <div class="intervue-error" id="forgot-error"></div>
+            <div class="intervue-success" id="forgot-success"></div>
+            
+            <div class="modal-buttons">
+                <button type="button" class="intervue-btn secondary" onclick="closeForgotPassword()">Cancel</button>
+                <button type="button" class="intervue-btn" onclick="sendResetLink()">Send Reset Link</button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Check URL parameters to auto-select tab
+        const urlParams = new URLSearchParams(window.location.search);
+        const tabParam = urlParams.get('tab');
+        
+        if (tabParam) {
+            const targetTab = document.querySelector(`[data-tab="${tabParam}"]`);
+            if (targetTab) {
+                targetTab.click();
+            }
+        }
+        
+        // Social Login Handler
+        function socialLogin(provider) {
+            // Redirect to OAuth endpoint
+            const providerNames = {
+                'google': 'Google',
+                'github': 'GitHub'
+            };
+            
+            // Check if OAuth is configured by trying to redirect
+            const oauthUrl = `/api/auth/${provider}`;
+            
+            // Show loading
+            const activeTab = document.querySelector('.intervue-tab.active').dataset.tab;
+            const errorElement = document.getElementById(activeTab + '-error');
+            const loadingElement = document.getElementById(activeTab + '-loading');
+            
+            loadingElement.classList.add('show');
+            
+            // Redirect to OAuth provider
+            window.location.href = oauthUrl;
+        }
+        
+        // Password Toggle Handler
+        function togglePassword(inputId, button) {
+            const input = document.getElementById(inputId);
+            const icon = button.querySelector('i');
+            
+            if (input.type === 'password') {
+                input.type = 'text';
+                icon.classList.remove('ph-eye');
+                icon.classList.add('ph-eye-slash');
+            } else {
+                input.type = 'password';
+                icon.classList.remove('ph-eye-slash');
+                icon.classList.add('ph-eye');
+            }
+        }
+        
+        // Forgot Password Modal
+        function showForgotPassword() {
+            document.getElementById('forgotPasswordModal').classList.add('show');
+            document.getElementById('forgot-error').classList.remove('show');
+            document.getElementById('forgot-success').classList.remove('show');
+            document.getElementById('forgot-email').value = '';
+        }
+        
+        function closeForgotPassword() {
+            document.getElementById('forgotPasswordModal').classList.remove('show');
+        }
+        
+        function sendResetLink() {
+            const email = document.getElementById('forgot-email').value.trim();
+            const errorElement = document.getElementById('forgot-error');
+            const successElement = document.getElementById('forgot-success');
+            
+            errorElement.classList.remove('show');
+            successElement.classList.remove('show');
+            
+            if (!email) {
+                errorElement.textContent = 'Please enter your email address';
+                errorElement.classList.add('show');
+                return;
+            }
+            
+            if (!email.includes('@')) {
+                errorElement.textContent = 'Please enter a valid email address';
+                errorElement.classList.add('show');
+                return;
+            }
+            
+            // Call the backend API
+            fetch('/api/auth/forgot-password', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    successElement.textContent = data.message;
+                    successElement.classList.add('show');
+                    
+                    setTimeout(() => {
+                        closeForgotPassword();
+                    }, 3000);
+                } else {
+                    errorElement.textContent = data.error || 'Failed to send reset link';
+                    errorElement.classList.add('show');
+                }
+            })
+            .catch(error => {
+                console.error('Forgot password error:', error);
+                errorElement.textContent = 'Connection error. Please try again.';
+                errorElement.classList.add('show');
+            });
+        }
+        
+        // Close modal when clicking outside
+        document.getElementById('forgotPasswordModal').addEventListener('click', function(e) {
+            if (e.target === this) {
+                closeForgotPassword();
+            }
+        });
+        
+        // Tab switching
+        const tabs = document.querySelectorAll('.intervue-tab');
+        const tabContents = document.querySelectorAll('.intervue-tab-content');
+        
+        tabs.forEach(tab => {
+            tab.addEventListener('click', () => {
+                const tabName = tab.dataset.tab;
+                
+                tabs.forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+                
+                tabContents.forEach(content => {
+                    content.classList.remove('active');
+                    if (content.id === tabName + '-tab') {
+                        content.classList.add('active');
+                    }
+                });
+            });
+        });
+        
+        // Create Meeting (Sign In)
+        const signinForm = document.getElementById('signin-form');
+        const signinBtn = document.getElementById('signin-btn');
+        const signinError = document.getElementById('signin-error');
+        const signinLoading = document.getElementById('signin-loading');
+        
+        signinForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const username = document.getElementById('signin-username').value.trim();
+            const password = document.getElementById('signin-password').value;
+            const rememberMe = document.getElementById('signin-remember').checked;
+            
+            signinError.classList.remove('show');
+            signinBtn.disabled = true;
+            signinLoading.classList.add('show');
+            
+            try {
+                const response = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password, rememberMe })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok && data.success) {
+                    window.location.href = '/host_dashboard';
+                } else {
+                    signinError.textContent = data.error || 'Invalid credentials';
+                    signinError.classList.add('show');
+                }
+            } catch (error) {
+                console.error('Login error:', error);
+                signinError.textContent = 'Connection error. Please check if the server is running at http://127.0.0.1:5000';
+                signinError.classList.add('show');
+            } finally {
+                signinBtn.disabled = false;
+                signinLoading.classList.remove('show');
+            }
+        });
+        
+        // Sign Up
+        const signupForm = document.getElementById('signup-form');
+        const signupBtn = document.getElementById('signup-btn');
+        const signupError = document.getElementById('signup-error');
+        const signupSuccess = document.getElementById('signup-success');
+        const signupLoading = document.getElementById('signup-loading');
+        
+        signupForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const fullName = document.getElementById('signup-fullname').value.trim();
+            const username = document.getElementById('signup-username').value.trim();
+            const email = document.getElementById('signup-email').value.trim();
+            const password = document.getElementById('signup-password').value;
+            const confirmPassword = document.getElementById('signup-confirm').value;
+            
+            signupError.classList.remove('show');
+            signupSuccess.classList.remove('show');
+            
+            if (password !== confirmPassword) {
+                signupError.textContent = 'Passwords do not match';
+                signupError.classList.add('show');
+                return;
+            }
+            
+            if (password.length < 8) {
+                signupError.textContent = 'Password must be at least 8 characters';
+                signupError.classList.add('show');
+                return;
+            }
+            
+            if (username.length < 3) {
+                signupError.textContent = 'Username must be at least 3 characters';
+                signupError.classList.add('show');
+                return;
+            }
+            
+            signupBtn.disabled = true;
+            signupLoading.classList.add('show');
+            
+            try {
+                const response = await fetch('/api/auth/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ fullName, username, email, password })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok && data.success) {
+                    signupSuccess.textContent = 'Account created! Redirecting to login...';
+                    signupSuccess.classList.add('show');
+                    setTimeout(() => {
+                        // Switch to create meeting tab
+                        document.querySelector('[data-tab="signin"]').click();
+                        // Pre-fill username
+                        document.getElementById('signin-username').value = username;
+                    }, 2000);
+                } else {
+                    signupError.textContent = data.error || 'Account creation failed';
+                    signupError.classList.add('show');
+                }
+            } catch (error) {
+                console.error('Registration error:', error);
+                signupError.textContent = 'Connection error. Please check if the server is running at http://127.0.0.1:5000';
+                signupError.classList.add('show');
+            } finally {
+                signupBtn.disabled = false;
+                signupLoading.classList.remove('show');
+            }
+        });
+        
+        // Quick Login (Candidate)
+        const candidateForm = document.getElementById('candidate-form');
+        const candidateBtn = document.getElementById('candidate-btn');
+        const candidateError = document.getElementById('candidate-error');
+        const candidateLoading = document.getElementById('candidate-loading');
+        
+        candidateForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const meetingId = document.getElementById('candidate-meeting').value.trim().toUpperCase();
+            const candidateName = document.getElementById('candidate-name').value.trim();
+            
+            candidateError.classList.remove('show');
+            candidateBtn.disabled = true;
+            candidateLoading.classList.add('show');
+            
+            try {
+                const response = await fetch('/api/candidate/join', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ meetingId, candidateName })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok && data.success) {
+                    window.location.href = '/candidate_dashboard';
+                } else {
+                    candidateError.textContent = data.error || 'Could not join meeting. Please check the meeting ID.';
+                    candidateError.classList.add('show');
+                }
+            } catch (error) {
+                console.error('Candidate join error:', error);
+                candidateError.textContent = 'Connection error. Please check if the server is running at http://127.0.0.1:5000';
+                candidateError.classList.add('show');
+            } finally {
+                candidateBtn.disabled = false;
+                candidateLoading.classList.remove('show');
+            }
+        });
+    </script>
+</body>
 </html>
