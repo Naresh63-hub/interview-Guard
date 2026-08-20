@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: interview-guard
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn -k eventlet -w 1 app:app
+    envVars:
+      - key: FLASK_ENV
+        value: production
+      - key: FLASK_DEBUG
+        value: "0"
+      - key: PORT
+        value: "10000"
+      - key: SESSION_COOKIE_SECURE
+        value: "true"
+      # The user will need to supply these via the Render dashboard:
+      # - MONGODB_URI
+      # - SECRET_KEY
+      # - GOOGLE_CLIENT_ID (optional)
+      # - GOOGLE_CLIENT_SECRET (optional)
