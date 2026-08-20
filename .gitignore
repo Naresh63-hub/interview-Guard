@@ -8,7 +8,6 @@ __pycache__/
 ssl.crt
 ssl.key
 *.log
-.aider*
 .reconstructed_*.txt
 .venv/
 __pycache__/
@@ -20,7 +19,6 @@ __pycache__/
 ssl.crt
 ssl.key
 *.log
-.aider*
 .reconstructed_*.txt
 .render.yaml
 requirements-training.txt

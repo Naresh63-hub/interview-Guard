@@ -4,6 +4,7 @@ Handles database operations for the Intervue proctoring system.
 """
 
 import os
+import time
 import hashlib
 import hmac
 import secrets
@@ -1601,6 +1602,7 @@ class DatabaseRouter:
     def __init__(self):
         self.mongo = MongoDBDatabase()
         self.memory = InMemoryBackend()
+        self._last_reconnect_try = 0.0
 
     @property
     def connected(self) -> bool:
@@ -1617,7 +1619,24 @@ class DatabaseRouter:
         return self.mongo.is_connected()
 
     def _backend(self):
-        return self.mongo if self.mongo.is_connected() else self.memory
+        mongo = self.mongo
+        if mongo.is_connected():
+            return mongo
+        # Self-heal: when the network drops (e.g. VPN toggling) and comes
+        # back, reconnect to Atlas on demand instead of staying on the
+        # in-memory backend forever. Throttled so a down network does not
+        # hammer Atlas with connection churn (each attempt blocks up to
+        # serverSelectionTimeoutMS ~15s).
+        now = time.monotonic()
+        if now - self._last_reconnect_try >= 10:
+            self._last_reconnect_try = now
+            try:
+                if mongo.connect():
+                    print("[MongoDB] Reconnected to Atlas")
+                    return mongo
+            except Exception:
+                pass
+        return self.memory
 
     def create_user(self, *args, **kwargs):
         return self._backend().create_user(*args, **kwargs)
