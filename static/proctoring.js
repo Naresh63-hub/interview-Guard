@@ -461,6 +461,13 @@ function initAudioFingerprinting() {
         return;
     }
 
+    // Called from both setupAudioAnalysis() and the video 'playing' handler.
+    // Re-initializing without teardown would stack duplicate AudioContexts and
+    // intervals — stop the previous instance first.
+    if (AFP.isRunning) {
+        stopAudioFingerprinting();
+    }
+
     try {
         // Resume AudioContext if suspended (browser autoplay policy)
         AFP.audioContext = new (window.AudioContext || window.webkitAudioContext)();

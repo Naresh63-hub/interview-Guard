@@ -53,8 +53,13 @@
             });
 
             async function joinMeeting() {
-                const meetingId = document.getElementById("meetingId").value.trim().toUpperCase();
+                let meetingId = document.getElementById("meetingId").value.trim().toUpperCase();
                 const candidateName = document.getElementById("candidateName").value.trim() || "Candidate";
+
+                // Candidates often paste the full invite URL instead of just
+                // the ID — extract the meeting id from it.
+                const pastedUrl = meetingId.match(/\/meet\/([A-Z0-9]{8})/);
+                if (pastedUrl) meetingId = pastedUrl[1];
                 
                 if (!meetingId) {
                     alert("Please enter a meeting ID");

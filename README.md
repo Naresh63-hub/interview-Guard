@@ -149,6 +149,7 @@ MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/
 MONGODB_DB_NAME=intervue_proctoring
 SECRET_KEY=your-secret-key
 HOST_PASSWORD=admin123
+SESSION_COOKIE_SECURE=1   # set to 1 only over HTTPS
 CORS_ORIGINS=http://localhost:5000
 ```
 

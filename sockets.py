@@ -7,18 +7,30 @@ import state
 from database import db
 
 def register_sockets(socketio):
+    def _socket_key(participant):
+        """Return the participant's socket id regardless of key casing.
+
+        In-memory participants were appended with ``socketId`` while MongoDB
+        persisted them under ``socket_id``; read both so a room re-fetched
+        from the database authorizes the same socket that joined it.
+        """
+        return participant.get("socketId") or participant.get("socket_id")
+
     def _participant_role(meeting_id):
         room = state.get_meeting_room((meeting_id or "").upper())
         if not room:
             return None
 
         for participant in room.get("participants", []):
-            if participant.get("socketId") == request.sid:
+            if _socket_key(participant) == request.sid:
                 return participant.get("role")
         return None
 
     def _is_candidate_socket(meeting_id):
         return _participant_role(meeting_id) == "candidate"
+
+    def _is_host_socket(meeting_id):
+        return _participant_role(meeting_id) in ("interviewer", "host", "admin")
 
     @socketio.on("join_meeting")
     def on_join_meeting(data):
@@ -44,7 +56,7 @@ def register_sockets(socketio):
             return
 
         sio_join(meeting_id)
-        existing = [p for p in room["participants"] if p["socketId"] == request.sid]
+        existing = [p for p in room["participants"] if _socket_key(p) == request.sid]
         if not existing:
             room["participants"].append(
                 {
@@ -91,7 +103,7 @@ def register_sockets(socketio):
                 "networkStats": room.get("networkStats"),
                 "participants": [
                     {
-                        "socketId": p["socketId"],
+                        "socketId": _socket_key(p),
                         "userName": p["userName"],
                         "role": p["role"],
                     }
@@ -146,7 +158,7 @@ def register_sockets(socketio):
         room = state.get_meeting_room(meeting_id)
         if room:
             room["participants"] = [
-                p for p in room["participants"] if p["socketId"] != request.sid
+                p for p in room["participants"] if _socket_key(p) != request.sid
             ]
             emit("user_left", {"socketId": request.sid}, to=meeting_id)
         sio_leave(meeting_id)
@@ -198,6 +210,9 @@ def register_sockets(socketio):
     @socketio.on("settings_update")
     def on_settings_update(data):
         meeting_id = (data.get("meetingId") or "").upper()
+        # Only the host/interviewer may change proctoring configuration.
+        if not _is_host_socket(meeting_id):
+            return
         room = state.get_meeting_room(meeting_id)
         if room and "settings" in data:
             room["proctoringSettings"] = data["settings"]
@@ -206,6 +221,9 @@ def register_sockets(socketio):
     @socketio.on("remote_control")
     def on_remote_control(data):
         meeting_id = (data.get("meetingId") or "").upper()
+        # Remote mute/camera control is a moderator capability.
+        if not _is_host_socket(meeting_id):
+            return
         emit("remote_control", data, to=meeting_id, skip_sid=request.sid)
 
     @socketio.on("browser_stats_update")
@@ -218,6 +236,10 @@ def register_sockets(socketio):
     @socketio.on("media_state_change")
     def on_media_state_change(data):
         meeting_id = (data.get("meetingId") or "").upper()
+        # Anyone in the meeting may report their own media state, but an
+        # outsider with no room membership must not be able to broadcast.
+        if _participant_role(meeting_id) is None:
+            return
         emit("media_state_change", data, to=meeting_id, skip_sid=request.sid)
 
     @socketio.on("audio_metrics_update")
@@ -245,9 +267,9 @@ def register_sockets(socketio):
     def on_sio_disconnect():
         for meeting_id, room in list(state.meeting_rooms.items()):
             for p in room["participants"]:
-                if p["socketId"] == request.sid:
+                if _socket_key(p) == request.sid:
                     room["participants"] = [
-                        x for x in room["participants"] if x["socketId"] != request.sid
+                        x for x in room["participants"] if _socket_key(x) != request.sid
                     ]
                     emit("user_left", {"socketId": request.sid}, to=meeting_id)
                     sio_leave(meeting_id)

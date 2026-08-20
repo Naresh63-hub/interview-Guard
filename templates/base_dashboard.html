@@ -124,6 +124,17 @@
                             <video id="local-video" autoplay muted playsinline></video>
                         </div>
 
+                        <!-- Remote interviewer video for candidates (candidate sees self
+                             in the main area and the interviewer in this corner PiP) -->
+                        <div class="pip-video-container" id="remote-video-pip" style="display: none;">
+                            <span>I</span>
+                            <video id="remote-video" autoplay playsinline></video>
+                        </div>
+
+                        <!-- Remote interviewer audio for candidates (main video stays muted
+                             to avoid echo, so remote audio plays through this element) -->
+                        <audio id="remote-audio" autoplay style="display: none;"></audio>
+
                         <div class="candidate-name-overlay" style="display: none;">
                             <h2 id="candidate-display-name">
                                 Interview Session
@@ -365,5 +376,13 @@
         </script>
         <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
         {% block scripts %}{% endblock %}
+        <script>
+            // Ensure socket connection is established
+            if (typeof socket !== 'undefined' && socket) {
+                console.log("[Base] Socket is available in base template");
+            } else {
+                console.warn("[Base] Socket not yet available in base template");
+            }
+        </script>
     </body>
 </html>

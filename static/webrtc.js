@@ -1,9 +1,39 @@
 // ─── WebRTC – Camera & SocketIO ────────────────────────────────────────────────
-let socket = null;
+// Make socket available globally for other scripts
+window.socket = null;
+window.localStream = null; // Make localStream globally available
 let peerConnection = null;
 let remoteSid = null;
 let participantCount = 1;
 const MEETING_ID = window.MEETING_ID;
+
+// API Origin - handle static preview vs production
+const IS_STATIC_PREVIEW = window.location.port === "5500";
+const API_ORIGIN = IS_STATIC_PREVIEW
+    ? "https://127.0.0.1:5000"
+    : window.location.origin;
+
+// DOM Elements - initialized when DOM is ready
+let videoElement = null;
+let btnMute = null;
+let btnVideo = null;
+let iconMute = null;
+let textMute = null;
+let iconVideo = null;
+let textVideo = null;
+let audioBars = null;
+
+// Initialize DOM elements when DOM is ready
+function initializeDOMElements() {
+    videoElement = document.getElementById("main-video");
+    btnMute = document.getElementById("btn-mute");
+    btnVideo = document.getElementById("btn-video");
+    iconMute = document.getElementById("icon-mute");
+    textMute = document.getElementById("text-mute");
+    iconVideo = document.getElementById("icon-video");
+    textVideo = document.getElementById("text-video");
+    audioBars = document.getElementById("audio-bars");
+}
 
 const ADVANCED_ICE_SERVERS = {
     iceServers: [
@@ -23,8 +53,8 @@ function createPeerConnection() {
     const pc = new RTCPeerConnection(ADVANCED_ICE_SERVERS);
 
     pc.onicecandidate = (evt) => {
-        if (evt.candidate && socket && socket.connected) {
-            socket.emit("ice_candidate", {
+        if (evt.candidate && window.socket && window.socket.connected) {
+            window.socket.emit("ice_candidate", {
                 meetingId: MEETING_ID,
                 candidate: evt.candidate,
                 to: remoteSid,
@@ -53,7 +83,9 @@ function createPeerConnection() {
         console.log("Received remote track:", evt.track.kind, "Role:", userRole);
         
         if (evt.track.kind === 'video') {
-            // Only show remote video in main element for host, not for candidate
+            // Host/interviewer: show remote (candidate) video in the main area.
+            // Candidate: keep the self-view in main area and show the
+            // interviewer in the corner PiP instead.
             if (userRole === "host" || userRole === "interviewer") {
                 videoElement.srcObject = evt.streams[0];
                 videoElement.muted = false; // Unmute remote
@@ -85,7 +117,15 @@ function createPeerConnection() {
                     });
                 }
             } else {
-                console.log("Candidate should not receive remote video, keeping local video");
+                const remotePip = document.getElementById("remote-video-pip");
+                const remoteVideo = document.getElementById("remote-video");
+                if (remoteVideo) {
+                    remoteVideo.srcObject = evt.streams[0];
+                    remoteVideo.style.background = "";
+                    remoteVideo.play().catch(e => console.warn("Remote video autoplay blocked", e));
+                    if (remotePip) remotePip.style.display = "block";
+                }
+                console.log("Candidate showing interviewer in corner PiP");
             }
         } else if (evt.track.kind === 'audio') {
             if (userRole === "host" || userRole === "interviewer") {
@@ -94,6 +134,15 @@ function createPeerConnection() {
                 }
                 videoElement.muted = false;
                 videoElement.play().catch(e => console.log("Audio autoplay prevented", e));
+            } else {
+                // Candidate must hear the interviewer. Main video is muted
+                // (self-view, echo protection) so route remote audio to a
+                // dedicated hidden audio element.
+                const remoteAudio = document.getElementById("remote-audio");
+                if (remoteAudio) {
+                    remoteAudio.srcObject = evt.streams[0];
+                    remoteAudio.play().catch(e => console.warn("Remote audio autoplay prevented", e));
+                }
             }
         }
     };
@@ -109,11 +158,12 @@ function createPeerConnection() {
 
 async function createAndSendOffer() {
     if (!peerConnection) return;
+    if (!window.socket || !window.socket.connected) return; // recovery offers are dropped otherwise
     try {
         makingOffer = true;
         const offer = await peerConnection.createOffer();
         await peerConnection.setLocalDescription(offer);
-        socket.emit("offer", {
+        window.socket.emit("offer", {
             meetingId: MEETING_ID,
             sdp: peerConnection.localDescription,
             to: remoteSid,
@@ -128,20 +178,21 @@ async function createAndSendOffer() {
 function setupSocket() {
     if (typeof io === "undefined" || !MEETING_ID) return;
 
-    socket = io(API_ORIGIN, {
+    window.socket = io(API_ORIGIN, {
         transports: ["websocket", "polling"],
         reconnectionAttempts: 10,
         reconnectionDelay: 1000,
         timeout: 20000
     });
 
-    socket.on("connect", () => {
-        socket.emit("join_meeting", {
+    window.socket.on("connect", () => {
+        console.log("[Socket] Connected to server");
+        window.socket.emit("join_meeting", {
             meetingId: MEETING_ID,
             userName: currentDisplayName,
-            userRole: userRole,
+            role: userRole,
         });
-        socket.emit("media_state_change", {
+        window.socket.emit("media_state_change", {
             meetingId: MEETING_ID,
             role: userRole,
             isMuted: isMuted,
@@ -149,7 +200,16 @@ function setupSocket() {
         });
     });
 
-    socket.on("room_info", (data) => {
+    window.socket.on("error", (data) => {
+        console.error("[Socket] Server error:", data);
+        if (data && data.message) {
+            if (typeof UI_UPDATER !== "undefined") {
+                UI_UPDATER.addAuditAlert("Connection Error", data.message, "", true);
+            }
+        }
+    });
+
+    window.socket.on("room_info", (data) => {
         const peers = data.participants || [];
         participantCount = peers.length;
         if (participantCount >= 2 && !sessionStartTime) {
@@ -174,7 +234,7 @@ function setupSocket() {
         console.log("[Socket] Room info received:", data);
     });
 
-    socket.on("session_status", (data) => {
+    window.socket.on("session_status", (data) => {
         console.log("[Socket] Session status update received:", data);
         if (data.bothPresent && (userRole === "host" || userRole === "interviewer")) {
             console.log("[Host] Session started - both participants connected");
@@ -196,7 +256,7 @@ function setupSocket() {
         }
     });
 
-    socket.on("user_joined", async (data) => {
+    window.socket.on("user_joined", async (data) => {
         console.log("[Socket] User joined:", data);
         remoteSid = data.sid || data.socketId || data.id;
         participantCount = Math.max(participantCount, 2);
@@ -204,27 +264,40 @@ function setupSocket() {
         
         UI_UPDATER.addAuditAlert("Participant Joined", `${data.userName || 'Candidate'} joined the meeting.`);
         
+        // Tear down any stale connection before negotiating with the new peer
+        if (peerConnection) {
+            peerConnection.close();
+            peerConnection = null;
+        }
         peerConnection = createPeerConnection();
         await createAndSendOffer();
     });
 
-    socket.on("offer", async (data) => {
+    window.socket.on("offer", async (data) => {
         remoteSid = data.from;
         
         if (!peerConnection) {
             peerConnection = createPeerConnection();
         }
         
+        // Perfect-negotiation guard: if an offer arrives while we are
+        // mid-negotiation (glare), roll back to stable so we can accept it
+        // instead of throwing InvalidStateError and killing the connection.
         const offerCollision = makingOffer || peerConnection.signalingState !== "stable";
-        ignoreOffer = !peerConnection && offerCollision;
-        
-        if (ignoreOffer) return;
+        if (offerCollision) {
+            try {
+                await peerConnection.setLocalDescription({ type: "rollback" });
+            } catch (rollbackErr) {
+                console.warn("offer collision: could not rollback, skipping:", rollbackErr);
+                return;
+            }
+        }
 
         try {
             await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
             const answer = await peerConnection.createAnswer();
             await peerConnection.setLocalDescription(answer);
-            socket.emit("answer", {
+            window.socket.emit("answer", {
                 meetingId: MEETING_ID,
                 sdp: peerConnection.localDescription,
                 to: remoteSid,
@@ -235,7 +308,7 @@ function setupSocket() {
         }
     });
 
-    socket.on("answer", async (data) => {
+    window.socket.on("answer", async (data) => {
         if (!peerConnection) return;
         try {
             await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
@@ -244,7 +317,7 @@ function setupSocket() {
         }
     });
 
-    socket.on("ice_candidate", async (data) => {
+    window.socket.on("ice_candidate", async (data) => {
         if (!peerConnection || !data.candidate) return;
         try {
             await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
@@ -255,12 +328,18 @@ function setupSocket() {
         }
     });
     
-    socket.on("user_left", (data) => {
+    window.socket.on("user_left", (data) => {
         UI_UPDATER.addAuditAlert("Participant Left", `${data.userName || 'Candidate'} left the meeting.`, "", true);
         if (peerConnection) {
             peerConnection.close();
             peerConnection = null;
         }
+        const remoteVideo = document.getElementById("remote-video");
+        const remotePip = document.getElementById("remote-video-pip");
+        const remoteAudio = document.getElementById("remote-audio");
+        if (remoteVideo) { remoteVideo.srcObject = null; }
+        if (remotePip) { remotePip.style.display = "none"; }
+        if (remoteAudio) { remoteAudio.srcObject = null; }
         // Return to local stream view only for candidates
         if (userRole === "candidate" && localStream) {
             videoElement.srcObject = localStream;
@@ -275,14 +354,14 @@ function setupSocket() {
         }
     });
 
-    socket.on("audit_event", (data) => {
+    window.socket.on("audit_event", (data) => {
         if (typeof UI_UPDATER !== "undefined" && UI_UPDATER.addAuditAlert) {
             // pass fromRemote = true to prevent infinite loop
             UI_UPDATER.addAuditAlert(data.title, data.message, data.confidence, data.isCritical, true);
         }
     });
 
-    socket.on("badge_update", (data) => {
+    window.socket.on("badge_update", (data) => {
         if (data.role !== userRole) {
             const el = document.getElementById(data.badgeId);
             const labelEl = document.getElementById(data.badgeId + "-label");
@@ -292,7 +371,7 @@ function setupSocket() {
         }
     });
 
-    socket.on("settings_update", (data) => {
+    window.socket.on("settings_update", (data) => {
         console.log("[Socket] Settings update received:", data);
         if (data && data.settings) {
             window.proctoringSettings = data.settings;
@@ -319,7 +398,7 @@ function setupSocket() {
         }
     });
 
-    socket.on("remote_control", (data) => {
+    window.socket.on("remote_control", (data) => {
         console.log("[Socket] Remote control received:", data);
         if (userRole === "candidate") {
             if (data.action === "mute") {
@@ -350,7 +429,7 @@ function setupSocket() {
         }
     });
 
-    socket.on("media_state_change", (data) => {
+    window.socket.on("media_state_change", (data) => {
         console.log("[Socket] Media state change received:", data);
         if (data.role === "candidate") {
             window.candidateMicMuted = data.isMuted;
@@ -368,7 +447,7 @@ function setupSocket() {
         }
     });
 
-    socket.on("browser_stats_update", (data) => {
+    window.socket.on("browser_stats_update", (data) => {
         console.log("[Socket] Browser stats update received:", data);
         if (userRole === "host" || userRole === "interviewer") {
             const tabEl = document.getElementById("stat-tab-switches");
@@ -384,7 +463,7 @@ function setupSocket() {
         }
     });
 
-    socket.on("audio_metrics_update", (data) => {
+    window.socket.on("audio_metrics_update", (data) => {
         if (userRole === "host" || userRole === "interviewer") {
             const voiceBar = document.getElementById('voice-level-bar');
             const voiceVal = document.getElementById('voice-level-value');
@@ -412,7 +491,7 @@ function setupSocket() {
         }
     });
 
-    socket.on("network_stats_update", (data) => {
+    window.socket.on("network_stats_update", (data) => {
         console.log("[Socket] Network stats update received:", data);
         if (userRole === "host" || userRole === "interviewer") {
             const ispEl = document.getElementById("stat-network-isp");
@@ -428,7 +507,7 @@ function setupSocket() {
         }
     });
 
-    socket.on("gaze_update", (data) => {
+    window.socket.on("gaze_update", (data) => {
         console.log("[Socket] Gaze update received:", data);
         if (userRole === "host" || userRole === "interviewer") {
             // Mark proctoring as active when host receives first gaze data
@@ -529,11 +608,18 @@ function showCameraErrorOverlay(info) {
 
 async function startWebcam() {
     try {
+        // Ensure DOM elements are initialized
+        if (!videoElement) {
+            initializeDOMElements();
+        }
+        
         // Camera APIs only exist in secure contexts (HTTPS / localhost).
         // Detect this up-front and explain it, instead of a generic "denied".
         if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== "function") {
             console.error("startWebcam: navigator.mediaDevices unavailable — page is not in a secure context (HTTPS or localhost).");
-            setGazeAlert("Camera locked: open http://localhost:5000 or HTTPS", true);
+            if (typeof setGazeAlert === 'function') {
+                setGazeAlert("Camera locked: open http://localhost:5000 or HTTPS", true);
+            }
             if (typeof UI_UPDATER !== 'undefined') {
                 UI_UPDATER.addAuditAlert("Hardware Error", "Camera locked by browser: page is not served over HTTPS/localhost.", "", true);
             }
@@ -543,6 +629,7 @@ async function startWebcam() {
 
         try {
             localStream = await navigator.mediaDevices.getUserMedia({
+            window.localStream = localStream; // Make globally accessible
                 video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
                 audio: {
                     echoCancellation: true,
@@ -554,12 +641,14 @@ async function startWebcam() {
             console.warn("High-res video failed, falling back to basic constraints.");
             try {
                 localStream = await navigator.mediaDevices.getUserMedia({
+            window.localStream = localStream; // Make globally accessible
                     video: true,
                     audio: true,
                 });
             } catch {
                 console.warn("Video+Audio failed, falling back to Video only.");
                 localStream = await navigator.mediaDevices.getUserMedia({
+            window.localStream = localStream; // Make globally accessible
                     video: true,
                     audio: false,
                 });
@@ -607,15 +696,55 @@ async function startWebcam() {
             console.warn("[WebRTC] No audio tracks found in local stream");
         }
 
-        updateShieldStatus(true);
+        // If a peer connection already exists (e.g. the user fixed camera
+        // permissions AFTER joining), swap the tracks in place and renegotiate
+        // so the remote side receives the newly granted media.
+        if (peerConnection) {
+            try {
+                const senders = peerConnection.getSenders();
+                const localTrackIds = new Set(localStream.getTracks().map((t) => t.id));
+                for (const sender of senders) {
+                    if (sender.track && !localTrackIds.has(sender.track.id)) {
+                        peerConnection.removeTrack(sender);
+                    }
+                }
+                for (const track of localStream.getTracks()) {
+                    const alreadySent = senders.some(
+                        (s) => s.track && s.track.id === track.id,
+                    );
+                    if (!alreadySent) {
+                        peerConnection.addTrack(track, localStream);
+                    }
+                }
+                if (
+                    peerConnection.signalingState === "stable" &&
+                    peerConnection.connectionState !== "connected"
+                ) {
+                    createAndSendOffer();
+                }
+            } catch (renegErr) {
+                console.warn("[WebRTC] Could not renegotiate after camera restart:", renegErr);
+            }
+        }
+
+        if (typeof updateShieldStatus === 'function') {
+            updateShieldStatus(true);
+        }
         console.log("Webcam started successfully.");
         if (typeof window.scanMediaDevices === "function") {
             window.scanMediaDevices();
         }
         
+        // Initialize UI elements after webcam starts
+        if (typeof UI_UPDATER !== 'undefined' && UI_UPDATER.addAuditAlert) {
+            UI_UPDATER.addAuditAlert("Camera Started", "Camera and microphone successfully initialized.");
+        }
+        
     } catch (error) {
         console.error("startWebcam:", error);
-        setGazeAlert("Camera access denied or locked. Please check permissions.", true);
+        if (typeof setGazeAlert === 'function') {
+            setGazeAlert("Camera access denied or locked. Please check permissions.", true);
+        }
         if (typeof UI_UPDATER !== 'undefined') {
             UI_UPDATER.addAuditAlert("Hardware Error", "Camera could not be accessed. It may be locked by another application.", "", true);
         }
@@ -634,23 +763,24 @@ function toggleMute() {
     }
 
     isMuted = !isMuted;
+    window.isMuted = isMuted; // Update global state
     audioTracks.forEach((t) => (t.enabled = !isMuted));
 
     if (isMuted) {
-        iconMute.classList.replace("ph-microphone", "ph-microphone-slash");
-        iconMute.style.color = "#ef4444";
-        textMute.textContent = "Unmute";
+        if (iconMute) iconMute.classList.replace("ph-microphone", "ph-microphone-slash");
+        if (iconMute) iconMute.style.color = "#ef4444";
+        if (textMute) textMute.textContent = "Unmute";
         // Pause audio bars animation
         if (audioBars) audioBars.style.visibility = "hidden";
     } else {
-        iconMute.classList.replace("ph-microphone-slash", "ph-microphone");
-        iconMute.style.color = "";
-        textMute.textContent = "Mute";
+        if (iconMute) iconMute.classList.replace("ph-microphone-slash", "ph-microphone");
+        if (iconMute) iconMute.style.color = "";
+        if (textMute) textMute.textContent = "Mute";
         if (audioBars) audioBars.style.visibility = "visible";
     }
 
-    if (socket && socket.connected) {
-        socket.emit("media_state_change", {
+    if (window.socket && window.socket.connected) {
+        window.socket.emit("media_state_change", {
             meetingId: MEETING_ID,
             role: userRole,
             isMuted: isMuted,
@@ -669,12 +799,13 @@ function toggleVideo() {
     }
 
     isVideoStopped = !isVideoStopped;
+    window.isVideoStopped = isVideoStopped; // Update global state
     videoTracks.forEach((t) => (t.enabled = !isVideoStopped));
 
     if (isVideoStopped) {
-        iconVideo.classList.replace("ph-video-camera", "ph-video-camera-slash");
-        iconVideo.style.color = "#ef4444";
-        textVideo.textContent = "Start Cam";
+        if (iconVideo) iconVideo.classList.replace("ph-video-camera", "ph-video-camera-slash");
+        if (iconVideo) iconVideo.style.color = "#ef4444";
+        if (textVideo) textVideo.textContent = "Start Cam";
         
         // For candidate, show placeholder when camera is off
         if (userRole === "candidate" && videoElement) {
@@ -682,9 +813,9 @@ function toggleVideo() {
             videoElement.srcObject = null; // Clear video stream
         }
     } else {
-        iconVideo.classList.replace("ph-video-camera-slash", "ph-video-camera");
-        iconVideo.style.color = "";
-        textVideo.textContent = "Stop Cam";
+        if (iconVideo) iconVideo.classList.replace("ph-video-camera-slash", "ph-video-camera");
+        if (iconVideo) iconVideo.style.color = "";
+        if (textVideo) textVideo.textContent = "Stop Cam";
         
         // For candidate, restore video when camera is on
         if (userRole === "candidate" && videoElement) {
@@ -694,8 +825,8 @@ function toggleVideo() {
         }
     }
 
-    if (socket && socket.connected) {
-        socket.emit("media_state_change", {
+    if (window.socket && window.socket.connected) {
+        window.socket.emit("media_state_change", {
             meetingId: MEETING_ID,
             role: userRole,
             isMuted: isMuted,
@@ -704,9 +835,12 @@ function toggleVideo() {
     }
 }
 
-// Wire buttons
-if (btnMute) btnMute.addEventListener("click", toggleMute);
-if (btnVideo) btnVideo.addEventListener("click", toggleVideo);
+// Wire buttons - wait for DOM to be ready
+document.addEventListener("DOMContentLoaded", () => {
+    initializeDOMElements();
+    if (btnMute) btnMute.addEventListener("click", toggleMute);
+    if (btnVideo) btnVideo.addEventListener("click", toggleVideo);
+});
 
 // ─── Screen Share ──────────────────────────────────────────────────────
 let screenStream = null;

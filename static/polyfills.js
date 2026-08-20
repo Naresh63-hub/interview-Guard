@@ -111,42 +111,48 @@ if (!window.CustomEvent || typeof window.CustomEvent !== 'function') {
 // ============================================================
 // MEDIA DEVICES POLYFILL
 // ============================================================
-if (!navigator.mediaDevices) {
-    navigator.mediaDevices = {};
-}
+if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    const legacyGetUserMedia =
+        navigator.getUserMedia ||
+        navigator.webkitGetUserMedia ||
+        navigator.mozGetUserMedia;
+    const legacyGetDisplayMedia =
+        navigator.getDisplayMedia ||
+        navigator.webkitGetDisplayMedia ||
+        navigator.mozGetDisplayMedia;
 
-if (!navigator.mediaDevices.getUserMedia) {
-    navigator.mediaDevices.getUserMedia = function(constraints) {
-        return new Promise((resolve, reject) => {
-            const getUserMedia = navigator.getUserMedia || 
-                                navigator.webkitGetUserMedia || 
-                                navigator.mozGetUserMedia;
-            
-            if (!getUserMedia) {
-                reject(new Error('getUserMedia is not supported in this browser'));
-                return;
-            }
-            
-            getUserMedia.call(navigator, constraints, resolve, reject);
-        });
-    };
-}
+    // On insecure origins (http://LAN-IP, http://10.x.x.x) `navigator.mediaDevices`
+    // is undefined AND cannot be assigned (it is a getter-only accessor on
+    // Navigator.prototype). If there is nothing legacy to delegate to, leave it
+    // undefined rather than crashing the rest of this polyfill file: webrtc.js
+    // detects that condition and shows the "not a secure context" guidance.
+    if (legacyGetUserMedia || legacyGetDisplayMedia) {
+        try {
+            const md = navigator.mediaDevices || {};
 
-if (!navigator.mediaDevices.getDisplayMedia) {
-    navigator.mediaDevices.getDisplayMedia = function(constraints) {
-        return new Promise((resolve, reject) => {
-            const getDisplayMedia = navigator.getDisplayMedia || 
-                                    navigator.webkitGetDisplayMedia || 
-                                    navigator.mozGetDisplayMedia;
-            
-            if (!getDisplayMedia) {
-                reject(new Error('getDisplayMedia is not supported in this browser'));
-                return;
+            if (!md.getUserMedia && legacyGetUserMedia) {
+                md.getUserMedia = function(constraints) {
+                    return new Promise((resolve, reject) => {
+                        legacyGetUserMedia.call(navigator, constraints, resolve, reject);
+                    });
+                };
             }
-            
-            getDisplayMedia.call(navigator, constraints, resolve, reject);
-        });
-    };
+
+            if (!md.getDisplayMedia && legacyGetDisplayMedia) {
+                md.getDisplayMedia = function(constraints) {
+                    return new Promise((resolve, reject) => {
+                        legacyGetDisplayMedia.call(navigator, constraints, resolve, reject);
+                    });
+                };
+            }
+
+            if (!navigator.mediaDevices) {
+                navigator.mediaDevices = md;
+            }
+        } catch (e) {
+            console.warn("MediaDevices polyfill skipped:", e);
+        }
+    }
 }
 
 // ============================================================

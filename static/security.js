@@ -5,8 +5,18 @@
 
 class SecurityGuard {
     constructor() {
-        this.integrityHash = this.calculateIntegrityHash();
-        this.originalScripts = this.captureOriginalScripts();
+        // Baseline is computed lazily on the first integrity tick (see
+        // monitorIntegrity): this script loads BEFORE webrtc.js/proctoring.js/
+        // gaze.js, so at construction time none of the critical functions
+        // exist yet. Hashing then would produce a baseline of "nothing" that
+        // differs from the loaded code 10s later — a guaranteed false
+        // "Code integrity hash changed" lockout on every page load.
+        // The script list has the same problem: capturing it here would miss
+        // every script that loads after this file, and the first tick would
+        // flag all of them as "injected". Both baselines are captured on the
+        // first tick instead, when the page is fully loaded.
+        this.integrityHash = null;
+        this.originalScripts = null;
         this.debuggerDetectionEnabled = true;
         this.tamperDetected = false;
         this.securityViolations = [];
@@ -80,19 +90,21 @@ class SecurityGuard {
     // ============================================================
     
     calculateIntegrityHash() {
-        // Create hash of critical functions and variables
+        // Create hash of critical functions and variables.
+        // NOTE: only entries that are actually defined on `window` contribute.
+        // Scripts load AFTER this file, so on the first tick every function
+        // listed here exists and the hash is a meaningful baseline.
         const criticalElements = [
             'toggleVideo',
             'toggleMute',
             'startMLProcessing',
-            'checkExtensions',
-            'socket.emit'
+            'checkExtensions'
         ];
         
         let hash = '';
         criticalElements.forEach(element => {
-            const func = window[element] || (typeof element === 'string' ? window[element] : null);
-            if (func && typeof func === 'function') {
+            const func = window[element];
+            if (typeof func === 'function') {
                 hash += func.toString().slice(0, 100);
             }
         });
@@ -112,6 +124,16 @@ class SecurityGuard {
         setInterval(() => {
             const currentHash = this.calculateIntegrityHash();
             
+            if (this.integrityHash === null) {
+                // First tick: every page script has finished loading by now
+                // (the monitor runs 10s after load), so this is the true
+                // baseline. Delaying it here — instead of in the constructor —
+                // prevents the false-positive lockout described above.
+                this.integrityHash = currentHash;
+                this.originalScripts = this.captureOriginalScripts();
+                return;
+            }
+            
             if (currentHash !== this.integrityHash) {
                 this.logViolation('integrity_breach', 'Code integrity hash changed - possible tampering');
                 this.integrityHash = currentHash; // Update to prevent spam
@@ -120,7 +142,11 @@ class SecurityGuard {
             // Check for new script injections
             const currentScripts = document.querySelectorAll('script[src]');
             const newScripts = Array.from(currentScripts).filter(
-                script => !this.originalScripts[script.src]
+                script => !this.originalScripts[script.src] && 
+                          !script.src.includes('phosphor-icons') &&
+                          !script.src.includes('chrome-extension') &&
+                          !script.src.includes('socket.io') &&
+                          !script.src.includes('/static/')
             );
             
             if (newScripts.length > 0) {
@@ -318,8 +344,8 @@ class SecurityGuard {
     }
     
     getSeverity(type) {
-        const criticalTypes = ['integrity_breach', 'script_injection', 'console_open'];
-        const highTypes = ['debugger_timing', 'decompilation', 'console_tamper'];
+        const criticalTypes = ['integrity_breach', 'console_open'];
+        const highTypes = ['debugger_timing', 'decompilation', 'console_tamper', 'script_injection'];
         
         if (criticalTypes.includes(type)) return 'critical';
         if (highTypes.includes(type)) return 'high';
@@ -354,7 +380,7 @@ class SecurityGuard {
     getSecurityReport() {
         return {
             violations: this.securityViolations,
-            integrityVerified: this.calculateIntegrityHash() === this.integrityHash,
+            integrityVerified: this.integrityHash === null || this.calculateIntegrityHash() === this.integrityHash,
             debuggerDetectionEnabled: this.debuggerDetectionEnabled,
             tamperDetected: this.tamperDetected
         };

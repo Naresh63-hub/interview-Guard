@@ -13,10 +13,11 @@ const ML_CONFIG = {
     gazeFrameIntervalMs: 1000, // At most 1 frame-analysis request per second
     frameInFlight: false,      // never stack requests — one at a time
     
-    // False positive reduction settings
-    confidenceThreshold: 0.5,      // Minimum confidence for detection
-    confidenceThresholdHigh: 0.7,  // High confidence threshold
-    confidenceThresholdLow: 0.3,   // Low confidence threshold
+    // False positive reduction settings (confidence is on the backend's
+    // 0-100 scale: MediaPipe ~90, Haar ~55, no-face ~30)
+    confidenceThreshold: 50,          // Below this, verdicts are treated as uncertain
+    confidenceThresholdHigh: 70,      // High confidence threshold
+    confidenceThresholdLow: 40,       // Below this, "looking away" is not flagged
     minFaceSize: 0.1,              // Minimum face size relative to frame
     maxFaceSize: 0.8,              // Maximum face size relative to frame
     falsePositiveReduction: true,  // Enable FP reduction algorithms
@@ -73,7 +74,6 @@ function startMLProcessing() {
     );
     console.log(
         `[ML] Processing started at ${frameRate} fps (adaptive: ${ML_CONFIG.adaptiveProcessing})`,
-    );
         `ML processing loop started at ${processingCanvas.width}x${processingCanvas.height}.`,
     );
 }
@@ -217,66 +217,72 @@ async function sendFrameForGazeAnalysis() {
 }
 
 // ─── False Positive Reduction ───────────────────────────────────────────────────
+// The backend /analyze result is FLAT: direction, lookingAway, faceDetected,
+// multipleFaces, reflectionDetected, objectsDetected, confidence (0-100),
+// pose. It has no `gaze.` / `face.` / `violation.` sub-objects, so the old
+// filter silently matched nothing. Rewritten against the real contract:
+// low-confidence verdicts are ignored and every violation signal must persist
+// (cooldown + consecutive frames) before it is allowed through.
 function applyFalsePositiveReduction(data) {
     if (!ML_CONFIG.falsePositiveReduction) return data;
-    
+
     const processed = { ...data };
     const now = Date.now();
-    
-    // Confidence threshold filtering
-    if (processed.gaze && processed.gaze.confidence) {
-        if (processed.gaze.confidence < ML_CONFIG.confidenceThreshold) {
-            processed.gaze.direction = 'uncertain';
-            processed.gaze.confidence = ML_CONFIG.confidenceThreshold;
-        }
+
+    // Confidence is on a 0-100 scale (MediaPipe ~90, Haar ~55, no-face ~30).
+    // A low-confidence "looking away" verdict is too unreliable to flag.
+    const confidence = processed.confidence || 0;
+    if (confidence > 0 && confidence < ML_CONFIG.confidenceThresholdLow) {
+        processed.lookingAway = false;
+        processed.direction = "CENTER";
     }
-    
-    // Face size validation
-    if (processed.face && processed.face.size) {
-        if (processed.face.size < ML_CONFIG.minFaceSize || processed.face.size > ML_CONFIG.maxFaceSize) {
-            processed.face.detected = false;
-            processed.face.reliable = false;
-        }
+
+    // No face at all is already the strongest signal — never downgrade it.
+    if (processed.faceDetected === false) {
+        return processed;
     }
-    
-    // Consecutive violation check
-    if (processed.violation && processed.violation.type) {
-        const violationType = processed.violation.type;
-        
-        // Check cooldown period
-        if (ML_CONFIG.lastViolationType === violationType && 
-            now - ML_CONFIG.lastViolationTime < ML_CONFIG.cooldownPeriod) {
-            processed.violation.suppressed = true;
-            processed.violation.reason = 'cooldown_period';
-            return processed;
-        }
-        
-        // Check consecutive violations
-        ML_CONFIG.violationHistory.push({
-            type: violationType,
-            time: now
-        });
-        
-        // Keep only recent violations
-        ML_CONFIG.violationHistory = ML_CONFIG.violationHistory.filter(
-            v => now - v.time < 30000 // 30 second window
-        );
-        
-        const recentViolations = ML_CONFIG.violationHistory.filter(
-            v => v.type === violationType
-        ).length;
-        
-        if (recentViolations < ML_CONFIG.consecutiveViolations) {
-            processed.violation.suppressed = true;
-            processed.violation.reason = 'insufficient_consecutive';
-            return processed;
-        }
-        
-        // Valid violation - update tracking
-        ML_CONFIG.lastViolationType = violationType;
-        ML_CONFIG.lastViolationTime = now;
+
+    // Identify the strongest violation signal present in this frame.
+    let violationType = null;
+    if (processed.multipleFaces) violationType = "multiple_faces";
+    else if (processed.reflectionDetected) violationType = "reflection";
+    else if (processed.objectsDetected && processed.objectsDetected.length > 0) violationType = "objects";
+    else if (processed.lookingAway) violationType = "looking_away";
+
+    if (!violationType) return processed;
+
+    const suppress = () => {
+        if (violationType === "multiple_faces") processed.multipleFaces = false;
+        else if (violationType === "reflection") processed.reflectionDetected = false;
+        else if (violationType === "objects") processed.objectsDetected = [];
+        else if (violationType === "looking_away") processed.lookingAway = false;
+    };
+
+    // Cooldown: the same violation type must not re-fire within the window.
+    if (ML_CONFIG.lastViolationType === violationType &&
+        now - ML_CONFIG.lastViolationTime < ML_CONFIG.cooldownPeriod) {
+        suppress();
+        return processed;
     }
-    
+
+    // Consecutive-frame check: the signal must persist across frames before
+    // it becomes a real alert (cuts single-frame glitches).
+    ML_CONFIG.violationHistory.push({ type: violationType, time: now });
+    ML_CONFIG.violationHistory = ML_CONFIG.violationHistory.filter(
+        (v) => now - v.time < 30000,
+    );
+
+    const recent = ML_CONFIG.violationHistory.filter(
+        (v) => v.type === violationType,
+    ).length;
+
+    if (recent < ML_CONFIG.consecutiveViolations) {
+        suppress();
+        return processed;
+    }
+
+    ML_CONFIG.lastViolationType = violationType;
+    ML_CONFIG.lastViolationTime = now;
     return processed;
 }
 

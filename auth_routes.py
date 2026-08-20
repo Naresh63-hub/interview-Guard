@@ -10,8 +10,10 @@ import secrets
 import pyotp
 import qrcode
 import requests
+from datetime import datetime, timezone
 from io import BytesIO
 from functools import wraps
+from urllib.parse import urlparse
 from flask import Blueprint, jsonify, request, session, current_app, redirect, url_for
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -26,39 +28,95 @@ oauth = OAuth()
 # Rate limiter for auth routes
 auth_limiter = Limiter(key_func=get_remote_address, default_limits=["10 per minute"])
 
+def utc_now():
+    """Return current UTC time as a timezone-aware datetime."""
+    return datetime.now(timezone.utc)
+
 # OAuth configuration (to be set in environment variables)
 GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID', '')
 GOOGLE_CLIENT_SECRET = os.getenv('GOOGLE_CLIENT_SECRET', '')
-GITHUB_CLIENT_ID = os.getenv('GITHUB_CLIENT_ID', '')
-GITHUB_CLIENT_SECRET = os.getenv('GITHUB_CLIENT_SECRET', '')
+GOOGLE_REDIRECT_URI = os.getenv('GOOGLE_REDIRECT_URI', '')
+
+def _oauth_setup_page(provider_name: str, redirect_uri: str):
+    """Friendly HTML page shown when an OAuth provider is not configured,
+    instead of a bare JSON error."""
+    upper = provider_name.upper()
+    return (
+        "<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'>"
+        "<title>OAuth setup required</title>"
+        "<style>body{font-family:Segoe UI,Arial,sans-serif;background:#0f0c29;"
+        "color:#fff;display:flex;align-items:center;justify-content:center;"
+        "min-height:100vh;margin:0;padding:20px} .card{background:rgba(255,255,255,.06);"
+        "border:1px solid rgba(255,255,255,.15);border-radius:16px;padding:32px;"
+        "max-width:640px;line-height:1.7} h1{font-size:1.4rem;margin:0 0 8px} "
+        "code{background:rgba(255,255,255,.12);padding:2px 6px;border-radius:6px}"
+        "ol{margin:12px 0 0;padding-left:20px} li{margin:8px 0} "
+        ".uri{display:block;background:#0008;border:1px solid rgba(255,255,255,.2);"
+        "border-radius:8px;padding:10px 12px;margin-top:6px;"
+        "font-family:Consolas,monospace;word-break:break-all}</style></head>"
+        "<body><div class='card'>"
+        f"<h1>{provider_name} OAuth is not configured</h1>"
+        f"<p>The server is running, but <code>{provider_name}</code> login is disabled "
+        "because no client credentials are set.</p><ol>"
+        f"<li>In the {provider_name} developer console, create an OAuth app / "
+        "client ID (type: Web application).</li>"
+        f"<li>Add this exact URL as an authorized redirect URI:"
+        f"<span class='uri'>{redirect_uri}</span></li>"
+        f"<li>Put the Client ID and Client Secret in your <code>.env</code> file as "
+        f"<code>{upper}_CLIENT_ID</code> and <code>{upper}_CLIENT_SECRET</code>.</li>"
+        "<li>Restart the server, then try logging in again.</li>"
+        "</ol></div></body></html>"
+    )
+
+def _google_redirect_uri() -> str:
+    """Resolve the Google OAuth redirect URI that matches the CURRENT request
+    origin.
+
+    Authlib stores the OAuth `state` value in the Flask session cookie, which
+    is scoped to a single host. If the redirect URI points at a different host
+    than the user is currently on (e.g. the app is served on http://192.168.1.8:5000
+    but GOOGLE_REDIRECT_URI is http://127.0.0.1:5000/...), the callback arrives
+    with no session cookie and Google OAuth fails with `mismatching_state`.
+    Deriving the URI from the request keeps the cookie and the callback on the
+    same origin (register the derived URI in the Google Cloud console).
+
+    GOOGLE_REDIRECT_URI overrides the derived value only when it already points
+    at the same host as the current request (e.g. when running behind a reverse
+    proxy where the request host differs from the public URI).
+    """
+    if GOOGLE_REDIRECT_URI:
+        try:
+            if urlparse(GOOGLE_REDIRECT_URI).netloc == urlparse(request.host_url).netloc:
+                return GOOGLE_REDIRECT_URI
+        except ValueError:
+            pass
+    return url_for('auth.google_callback', _external=True)
 
 def init_oauth(app):
     """Initialize OAuth providers."""
-    oauth.init_app(app)
-    
-    # Google OAuth
-    if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
-        oauth.register(
-            name='google',
-            client_id=GOOGLE_CLIENT_ID,
-            client_secret=GOOGLE_CLIENT_SECRET,
-            server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
-            client_kwargs={
-                'scope': 'openid email profile'
-            }
-        )
-    
-    # GitHub OAuth
-    if GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET:
-        oauth.register(
-            name='github',
-            client_id=GITHUB_CLIENT_ID,
-            client_secret=GITHUB_CLIENT_SECRET,
-            access_token_url='https://github.com/login/oauth/access_token',
-            authorize_url='https://github.com/login/oauth/authorize',
-            api_base_url='https://api.github.com/',
-            client_kwargs={'scope': 'user:email'}
-        )
+    try:
+        oauth.init_app(app)
+        
+        # Google OAuth
+        if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
+            oauth.register(
+                name='google',
+                client_id=GOOGLE_CLIENT_ID,
+                client_secret=GOOGLE_CLIENT_SECRET,
+                server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
+                client_kwargs={
+                    'scope': 'openid email profile'
+                }
+            )
+            print("[Auth] Google OAuth configured")
+        else:
+            print("[Auth] Google OAuth not configured (missing credentials)")
+        
+
+    except Exception as e:
+        print(f"[Auth] OAuth initialization failed: {e}")
+        import traceback
+        traceback.print_exc()
 
 # ============================================================
 # ROLE-BASED ACCESS CONTROL DECORATORS
@@ -149,7 +207,6 @@ def login_user():
     
     if not username or not password:
         return jsonify({"error": "Username and password are required"}), 400
-    
     # Authenticate user
     auth_result = db.authenticate_user(username, password)
     
@@ -396,24 +453,35 @@ def reset_password():
     return jsonify({"success": True, "message": "Password reset successfully."})
 
 # OAuth Routes
-@auth_bp.route("/google")
+@auth_bp.route("/google", methods=["GET"])
 def google_login():
     """Initiate Google OAuth login."""
-    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
-        return jsonify({"error": "Google OAuth not configured. Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET environment variables."}), 500
-    
-    redirect_uri = url_for('auth.google_callback', _external=True)
-    return oauth.google.authorize_redirect(redirect_uri)
+    # The redirect URI must match the origin the user is currently on so the
+    # session cookie (which holds the OAuth `state`) survives the round-trip.
+    redirect_uri = _google_redirect_uri()
 
-@auth_bp.route("/google/callback")
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        return _oauth_setup_page("Google", redirect_uri), 501
+    
+    try:
+        return oauth.google.authorize_redirect(redirect_uri)
+    except Exception as e:
+        return jsonify({"error": f"OAuth redirect failed: {str(e)}"}), 500
+
+@auth_bp.route("/google/callback", methods=["GET"])
 def google_callback():
     """Handle Google OAuth callback."""
+    # Use consistent redirect URI for error page
+    redirect_uri = _google_redirect_uri()
+    
     if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
-        return jsonify({"error": "Google OAuth not configured"}), 500
+        return _oauth_setup_page("Google", redirect_uri), 501
     
     try:
         token = oauth.google.authorize_access_token()
-        user_info = oauth.google.parse_id_token(token)
+        user_info = token.get('userinfo')
+        if not user_info:
+            user_info = oauth.google.userinfo(token=token)
         
         email = user_info.get('email')
         name = user_info.get('name')
@@ -425,15 +493,12 @@ def google_callback():
         if user:
             # Update Google ID if not set
             if not user.get('google_id'):
-                db.db.users.update_one(
-                    {"_id": user["_id"]},
-                    {"$set": {"google_id": google_id}}
-                )
+                db.link_oauth_id(str(user['_id']), 'google', google_id)
             # Log in existing user
             session['user_id'] = str(user['_id'])
             session['authenticated'] = True
             session['auth_method'] = 'google'
-            return redirect('/host_dashboard')
+            return redirect(url_for('main.host_dashboard_landing'))
         else:
             # Create new user
             username = email.split('@')[0]
@@ -449,85 +514,45 @@ def google_callback():
                 session['user_id'] = result['user_id']
                 session['authenticated'] = True
                 session['auth_method'] = 'google'
-                return redirect('/host_dashboard')
+                return redirect(url_for('main.host_dashboard_landing'))
             else:
                 return jsonify({"error": result.get('error', 'Failed to create user')}), 400
                 
     except Exception as e:
-        return jsonify({"error": f"Google OAuth failed: {str(e)}"}), 500
+        # A stale `state` (e.g. the callback arrived on a different host than
+        # where login was started, or the browser dropped the session cookie)
+        # must not leave a poisoned session. Clear it and route back to the
+        # login page with a readable message instead of raw JSON.
+        for key in list(session.keys()):
+            if 'authlib_state' in key or '_google_' in key:
+                session.pop(key, None)
+        message = "OAuth state mismatch. Please try again from the login page."
+        if 'mismatching_state' not in str(e) and 'state' not in str(e).lower():
+            message = "Google sign-in failed. Please try again."
+        return redirect(url_for('main.home', oauth_error=message))
 
-@auth_bp.route("/github")
-def github_login():
-    """Initiate GitHub OAuth login."""
-    if not GITHUB_CLIENT_ID or not GITHUB_CLIENT_SECRET:
-        return jsonify({"error": "GitHub OAuth not configured. Please set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET environment variables."}), 500
-    
-    redirect_uri = url_for('auth.github_callback', _external=True)
-    return oauth.github.authorize_redirect(redirect_uri)
 
-@auth_bp.route("/github/callback")
-def github_callback():
-    """Handle GitHub OAuth callback."""
-    if not GITHUB_CLIENT_ID or not GITHUB_CLIENT_SECRET:
-        return jsonify({"error": "GitHub OAuth not configured"}), 500
+@auth_bp.route("/status")
+def auth_status():
+    """Check authentication system status."""
+    google_redirect = _google_redirect_uri()
     
-    try:
-        token = oauth.github.authorize_access_token()
-        resp = oauth.github.get('user', token=token)
-        user_info = resp.json()
-        
-        email = user_info.get('email')
-        name = user_info.get('name') or user_info.get('login')
-        github_id = str(user_info.get('id'))
-        
-        # Get primary email if not provided
-        if not email:
-            resp = oauth.github.get('user/emails', token=token)
-            emails = resp.json()
-            primary_email = next((e['email'] for e in emails if e['primary'] and e['verified']), None)
-            email = primary_email
-        
-        if not email:
-            return jsonify({"error": "GitHub email not verified"}), 400
-        
-        # Check if user exists by email or GitHub ID
-        user = db.get_user_by_email(email)
-        
-        if user:
-            # Update GitHub ID if not set
-            if not user.get('github_id'):
-                db.db.users.update_one(
-                    {"_id": user["_id"]},
-                    {"$set": {"github_id": github_id}}
-                )
-            # Log in existing user
-            session['user_id'] = str(user['_id'])
-            session['authenticated'] = True
-            session['auth_method'] = 'github'
-            return redirect('/host_dashboard')
-        else:
-            # Create new user
-            username = user_info.get('login', email.split('@')[0])
-            result = db.create_user(
-                username=username,
-                email=email,
-                password=secrets.token_urlsafe(32),  # Random password
-                full_name=name,
-                github_id=github_id
-            )
-            
-            if result.get('success'):
-                session['user_id'] = result['user_id']
-                session['authenticated'] = True
-                session['auth_method'] = 'github'
-                return redirect('/host_dashboard')
-            else:
-                return jsonify({"error": result.get('error', 'Failed to create user')}), 400
-                
-    except Exception as e:
-        return jsonify({"error": f"GitHub OAuth failed: {str(e)}"}), 500
+    return jsonify({
+        "status": "active",
+        "google_configured": bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET),
+        "google_redirect_uri": google_redirect
+    })
+
+@auth_bp.route("/test")
+def auth_test():
+    """Test route to verify auth routes are working."""
+    return jsonify({
+        "message": "Auth routes are working",
+        "timestamp": str(utc_now())
+    })
 
 def register_auth_routes(app):
     """Register authentication routes with the Flask app."""
     init_oauth(app)
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
+    print("[Auth] Authentication routes registered at /api/auth")

@@ -2,10 +2,14 @@ import os
 import time
 import uuid
 import base64
-import cv2
-import numpy as np
 import hmac
 import hashlib
+import json
+import re
+import urllib.request
+import urllib.parse
+import cv2
+import numpy as np
 from flask import Blueprint, jsonify, redirect, render_template, request, url_for, session, current_app
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -227,7 +231,8 @@ def register():
 
 @bp.route("/login/host")
 def login_host():
-    return render_template("login_host.html")
+    # Redirect to main login page
+    return redirect(url_for('main.login'))
 
 @bp.route("/login/candidate")
 def login_candidate():
@@ -255,7 +260,9 @@ def candidate_join():
 
     data = request.get_json(silent=True) or {}
     meeting_id = (data.get("meetingId") or "").strip().upper()
-    display_name = (data.get("displayName") or "").strip()
+    # Accept both wire names: the login page sends displayName, but the
+    # older candidate form used candidateName.
+    display_name = (data.get("displayName") or data.get("candidateName") or "").strip()
 
     if not meeting_id:
         return jsonify({"error": "Meeting ID is required"}), 400
@@ -273,10 +280,36 @@ def candidate_join():
         "displayName": display_name or "Candidate",
     }), 200
 
+@bp.route("/host_dashboard")
+def host_dashboard_landing():
+    """Post-login landing: send an authenticated host straight into a meeting.
+
+    Reuses the host's most recent meeting when one exists (so a Google /
+    email login drops them back into the room they were in); otherwise a
+    fresh meeting is created on the spot. Never shows the login page again
+    once the host is authenticated.
+    """
+    is_authenticated_host = session.get('authenticated') and session.get('role') in ('admin', 'interviewer')
+    if not (is_authenticated_host or session.get('host_authenticated')):
+        return redirect(url_for('main.home'))
+
+    # Reuse the host's most recent meeting if one exists
+    user_id = session.get('user_id')
+    if user_id:
+        room = state.get_latest_meeting_for_user(user_id)
+        if room and room.get("id"):
+            session['host_authenticated'] = True
+            return redirect(url_for('main.host_dashboard', meeting_id=room["id"]))
+
+    # Otherwise create a fresh meeting and go straight in
+    meeting_id, _ = _create_meeting({})
+    return redirect(url_for('main.host_dashboard', meeting_id=meeting_id))
+
 @bp.route("/host_dashboard/<meeting_id>")
 def host_dashboard(meeting_id):
-    if not session.get('host_authenticated'):
-        return redirect("/login/host")
+    is_authenticated_host = session.get('authenticated') and session.get('role') in ('admin', 'interviewer')
+    if not (is_authenticated_host or session.get('host_authenticated')):
+        return redirect(url_for('main.login'))
     room = state.get_meeting_room(meeting_id.upper())
     if not room:
         return redirect("/login/host")
@@ -292,7 +325,10 @@ def candidate_dashboard(meeting_id):
     meeting_id = meeting_id.upper()
     if session.get('candidate_verified_meeting') != meeting_id:
         return "Unauthorized: Please use the signed link sent by the host", 403
-    room = state.meeting_rooms.get(meeting_id)
+    # Mongo-aware lookup: after a server restart the in-memory dict is empty,
+    # so a raw dict check would bounce the candidate back to the join page
+    # even though the room exists in MongoDB.
+    room = state.get_meeting_room(meeting_id)
     if not room:
         return redirect(f"/login/candidate?meeting_id={meeting_id}")
     return render_template(
@@ -348,22 +384,12 @@ def api_calibrate():
             "landmarks": landmarks,
             "timestamp": time.time()
         }
-        
+
+        # Keep samples in memory only: raw face landmarks are privacy-
+        # sensitive and were previously written to calibration_data.json on
+        # disk. Nothing reads that file back, so drop the persistence.
         state.calibration_samples.append(sample)
-        
-        import json
-        filepath = "calibration_data.json"
-        existing_data = []
-        if os.path.exists(filepath):
-            with open(filepath, "r") as f:
-                try:
-                    existing_data = json.load(f)
-                except Exception:
-                    existing_data = []
-        existing_data.append(sample)
-        with open(filepath, "w") as f:
-            json.dump(existing_data, f, indent=2)
-            
+
         return jsonify({"success": True, "samples_count": len(state.calibration_samples)}), 200
         
     except Exception as e:
@@ -443,9 +469,16 @@ def create_room():
         data = request.get_json(silent=True) or {}
         password = data.get("password", "").strip()
         expected_password = os.getenv("HOST_PASSWORD", "admin123")
-        if password != expected_password:
+        if not hmac.compare_digest(password, expected_password):
             return jsonify({"error": "Invalid host credentials"}), 401
-    
+
+    meeting_id, signed_link = _create_meeting(data)
+    return jsonify({"meetingId": meeting_id, "link": signed_link}), 201
+
+def _create_meeting(data):
+    """Shared room-creation core used by /create-room and the post-login
+    /host_dashboard landing. Returns (meeting_id, signed_link) and sets the
+    host session flags."""
     host_name = (data.get("hostName") or session.get('full_name', 'Host')).strip()
     title = (data.get("title") or "Interview Session").strip()
     meeting_id = str(uuid.uuid4())[:8].upper()
@@ -473,261 +506,7 @@ def create_room():
                      f"Room {meeting_id} created by {host_name} ({session.get('role', 'interviewer')})", 
                      confidence="High", is_critical=False)
     
-    return jsonify({"meetingId": meeting_id, "link": signed_link}), 201
-
-# ============================================================
-# AUTHENTICATION ENDPOINTS (NEW)
-# ============================================================
-
-@bp.route("/auth/register", methods=["POST", "OPTIONS"])
-@limiter.limit("5 per minute")
-def register_user():
-    """Register a new user account."""
-    if request.method == "OPTIONS":
-        return jsonify({}), 200
-    
-    data = request.get_json(silent=True) or {}
-    username = data.get("username", "").strip()
-    email = data.get("email", "").strip()
-    password = data.get("password", "")
-    full_name = data.get("fullName", "").strip()
-    role = data.get("role", "interviewer").strip().lower()
-    
-    # Validation
-    if not username or len(username) < 3:
-        return jsonify({"error": "Username must be at least 3 characters"}), 400
-    if not email or "@" not in email:
-        return jsonify({"error": "Valid email is required"}), 400
-    if not password or len(password) < 8:
-        return jsonify({"error": "Password must be at least 8 characters"}), 400
-    
-    # Check if this is the first user (make them admin)
-    existing_users = db.get_all_users()
-    if len(existing_users) == 0:
-        role = "admin"
-    
-    result = db.create_user(username, email, password, full_name, role)
-    
-    if result.get("success"):
-        return jsonify(result), 201
-    else:
-        return jsonify(result), 400
-
-@bp.route("/auth/login", methods=["POST", "OPTIONS"])
-@limiter.limit("10 per minute")
-def login_user():
-    """Authenticate a user and create a session."""
-    if request.method == "OPTIONS":
-        return jsonify({}), 200
-    
-    data = request.get_json(silent=True) or {}
-    username = data.get("username", "").strip()
-    password = data.get("password", "")
-    remember_me = data.get("rememberMe", False)
-    
-    if not username or not password:
-        return jsonify({"error": "Username and password are required"}), 400
-    
-    # Authenticate user
-    auth_result = db.authenticate_user(username, password)
-    
-    if auth_result.get("success"):
-        # Create session
-        session_result = db.create_session(
-            auth_result["user_id"], 
-            remember_me
-        )
-        
-        if session_result.get("success"):
-            # Set session data
-            session['user_id'] = auth_result["user_id"]
-            session['username'] = auth_result["username"]
-            session['email'] = auth_result["email"]
-            session['full_name'] = auth_result["full_name"]
-            session['role'] = auth_result["role"]
-            session['session_token'] = session_result["session_token"]
-            session['authenticated'] = True
-            
-            return jsonify({
-                "success": True,
-                "user": {
-                    "username": auth_result["username"],
-                    "email": auth_result["email"],
-                    "full_name": auth_result["full_name"],
-                    "role": auth_result["role"]
-                },
-                "session_token": session_result["session_token"],
-                "expires_at": session_result["expires_at"]
-            }), 200
-        else:
-            return jsonify({"error": "Failed to create session"}), 500
-    else:
-        return jsonify({"error": auth_result.get("error", "Authentication failed")}), 401
-
-@bp.route("/auth/logout", methods=["POST", "OPTIONS"])
-def logout_user():
-    """Logout the current user."""
-    if request.method == "OPTIONS":
-        return jsonify({}), 200
-    
-    # Clear session
-    session_token = session.get('session_token')
-    if session_token:
-        db.delete_session(session_token)
-    
-    session.clear()
-    
-    return jsonify({"success": True, "message": "Logged out successfully"}), 200
-
-@bp.route("/auth/me", methods=["GET"])
-def get_current_user():
-    """Get current authenticated user info."""
-    if not session.get('authenticated'):
-        return jsonify({"error": "Not authenticated"}), 401
-    
-    return jsonify({
-        "success": True,
-        "user": {
-            "username": session.get('username'),
-            "email": session.get('email'),
-            "full_name": session.get('full_name'),
-            "role": session.get('role')
-        }
-    }), 200
-
-@bp.route("/auth/users", methods=["GET", "OPTIONS"])
-def get_users():
-    """Get all users (admin only)."""
-    if request.method == "OPTIONS":
-        return jsonify({}), 200
-    
-    # Check if user is admin
-    if session.get('role') != 'admin':
-        return jsonify({"error": "Admin access required"}), 403
-    
-    users = db.get_all_users()
-    return jsonify({"success": True, "users": users}), 200
-
-@bp.route("/auth/users/<user_id>", methods=["PUT", "OPTIONS"])
-def update_user_role(user_id):
-    """Update user role (admin only)."""
-    if request.method == "OPTIONS":
-        return jsonify({}), 200
-    
-    # Check if user is admin
-    if session.get('role') != 'admin':
-        return jsonify({"error": "Admin access required"}), 403
-    
-    data = request.get_json(silent=True) or {}
-    new_role = data.get("role", "").strip().lower()
-    
-    if not new_role:
-        return jsonify({"error": "Role is required"}), 400
-    
-    result = db.update_user_role(user_id, new_role)
-    
-    if result.get("success"):
-        return jsonify(result), 200
-    else:
-        return jsonify(result), 400
-
-@bp.route("/auth/users/<user_id>", methods=["DELETE", "OPTIONS"])
-def delete_user(user_id):
-    """Delete a user (admin only)."""
-    if request.method == "OPTIONS":
-        return jsonify({}), 200
-    
-    # Check if user is admin
-    if session.get('role') != 'admin':
-        return jsonify({"error": "Admin access required"}), 403
-    
-    result = db.delete_user(user_id)
-    
-    if result.get("success"):
-        return jsonify(result), 200
-    else:
-        return jsonify(result), 400
-
-# ============================================================
-# MFA/TOTP ENDPOINTS (NEW)
-# ============================================================
-
-@bp.route("/auth/mfa/enable", methods=["POST", "OPTIONS"])
-def enable_mfa():
-    """Enable MFA for the current user."""
-    if request.method == "OPTIONS":
-        return jsonify({}), 200
-    
-    if not session.get('authenticated'):
-        return jsonify({"error": "Not authenticated"}), 401
-    
-    user_id = session.get('user_id')
-    result = db.enable_mfa(user_id)
-    
-    if result.get("success"):
-        # Generate QR code for TOTP setup
-        import qrcode
-        from io import BytesIO
-        
-        qr = qrcode.QRCode(version=1, box_size=10, border=5)
-        qr.add_data(result["qr_code_url"])
-        qr.make(fit=True)
-        
-        img = qr.make_image(fill_color="black", back_color="white")
-        
-        # Convert to base64
-        buffered = BytesIO()
-        img.save(buffered, format="PNG")
-        img_str = base64.b64encode(buffered.getvalue()).decode()
-        
-        return jsonify({
-            "success": True,
-            "secret": result["secret"],
-            "qr_code": f"data:image/png;base64,{img_str}",
-            "setup_url": result["qr_code_url"]
-        }), 200
-    else:
-        return jsonify(result), 400
-
-@bp.route("/auth/mfa/disable", methods=["POST", "OPTIONS"])
-def disable_mfa():
-    """Disable MFA for the current user."""
-    if request.method == "OPTIONS":
-        return jsonify({}), 200
-    
-    if not session.get('authenticated'):
-        return jsonify({"error": "Not authenticated"}), 401
-    
-    user_id = session.get('user_id')
-    result = db.disable_mfa(user_id)
-    
-    if result.get("success"):
-        return jsonify(result), 200
-    else:
-        return jsonify(result), 400
-
-@bp.route("/auth/mfa/verify", methods=["POST", "OPTIONS"])
-def verify_mfa():
-    """Verify TOTP code during login."""
-    if request.method == "OPTIONS":
-        return jsonify({}), 200
-    
-    if not session.get('authenticated'):
-        return jsonify({"error": "Not authenticated"}), 401
-    
-    data = request.get_json(silent=True) or {}
-    totp_code = data.get("code", "").strip()
-    user_id = session.get('user_id')
-    
-    if not totp_code:
-        return jsonify({"error": "TOTP code is required"}), 400
-    
-    if db.verify_totp(user_id, totp_code):
-        # Mark MFA as verified in session
-        session['mfa_verified'] = True
-        return jsonify({"success": True, "message": "MFA verified successfully"}), 200
-    else:
-        return jsonify({"error": "Invalid TOTP code"}), 401
+    return meeting_id, signed_link
 
 @bp.route("/api/room/<meeting_id>", methods=["GET"])
 def get_room(meeting_id):
@@ -760,21 +539,21 @@ def embed_view():
     if not _validate_partner_api_key(partner_id, api_key):
         return "Unauthorized: Invalid partner credentials", 403
     
-    # Verify meeting exists
-    room = state.meeting_rooms.get(meeting_id)
+    # Verify meeting exists (Mongo-aware; the in-memory dict is empty after
+    # a server restart).
+    room = state.get_meeting_room(meeting_id)
     if not room:
         return "Meeting not found", 404
     
     # Parse configuration
     try:
-        import json
         branding = json.loads(request.args.get('branding', '{}'))
         features = json.loads(request.args.get('features', '{}'))
         show_header = request.args.get('show_header', 'true').lower() == 'true'
         show_controls = request.args.get('show_controls', 'true').lower() == 'true'
         show_stats = request.args.get('show_stats', 'true').lower() == 'true'
         theme = request.args.get('theme', 'light')
-    except:
+    except (TypeError, ValueError, json.JSONDecodeError):
         branding = {}
         features = {}
         show_header = True
@@ -796,21 +575,35 @@ def embed_view():
         theme=theme
     )
 
+def _load_partner_keys() -> dict:
+    """Parse PARTNER_API_KEYS="partner1:key1,partner2:key2" from the env.
+
+    Returned map is {partner_id: api_key}. The keys live in the environment,
+    never in code, so they can be rotated without a redeploy.
+    """
+    raw = os.getenv("PARTNER_API_KEYS", "")
+    partners = {}
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        pid, _, key = entry.partition(":")
+        pid = pid.strip().lower()
+        key = key.strip()
+        if pid and key:
+            partners[pid] = key
+    return partners
+
+
 def _validate_partner_api_key(partner_id, api_key):
-    """Validate partner API key for white-label access."""
-    # In production, this would check against a database of partners
-    # For now, we'll allow basic validation
+    """Validate partner API key for white-label access against PARTNER_API_KEYS."""
     if not partner_id or not api_key:
         return False
-    
-    # TODO: Implement proper partner validation
-    # - Check against database of registered partners
-    # - Validate API key signature
-    # - Check if partner is active and in good standing
-    # - Rate limit per partner
-    
-    # For development, allow any non-empty values
-    return len(partner_id) > 0 and len(api_key) > 0
+    expected = _load_partner_keys().get(str(partner_id).strip().lower())
+    if expected is None:
+        return False
+    # Constant-time compare so a timing side channel can't leak the key.
+    return hmac.compare_digest(expected, str(api_key).strip())
 
 # ─── Analytics and Audit Log Routes ────────────────────────────────────────
 
@@ -892,7 +685,10 @@ def room_invite(meeting_id):
         return jsonify({"error": "Host authentication required"}), 401
 
     meeting_id = meeting_id.upper()
-    if meeting_id not in state.meeting_rooms:
+    # Use the Mongo-aware lookup: the in-memory dict is empty after a server
+    # restart, so checking `state.meeting_rooms` alone would 404 on rooms
+    # that exist in MongoDB.
+    if not state.get_meeting_room(meeting_id):
         return jsonify({"error": "Room not found"}), 404
 
     return jsonify({"meetingId": meeting_id, "link": _generate_signed_link(meeting_id)}), 200
@@ -1176,7 +972,6 @@ def analyze_audio():
 def audio_state_route():
     return jsonify(audio_state)
 
-import json
 @bp.route("/analyze_answer", methods=["POST", "OPTIONS"])
 def analyze_answer():
     if request.method == "OPTIONS":
@@ -1221,7 +1016,6 @@ def analyze_answer():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-import urllib.request
 @bp.route("/analyze_network", methods=["POST", "OPTIONS"])
 def analyze_network():
     if request.method == "OPTIONS":
@@ -1237,8 +1031,14 @@ def analyze_network():
         return jsonify({"error": "No IP provided"}), 400
 
     try:
-        # Query ip-api.com for proxy/VPN data (HTTP is fine from backend)
-        url = f"http://ip-api.com/json/{client_ip}?fields=status,country,city,isp,proxy,hosting,query"
+        # Query ip-api.com for proxy/VPN data (HTTPS: avoids sending the
+        # probe over plaintext and closes the earlier SSRF-via-IP-parameter
+        # vector; the IP is still user-supplied, so it is URL-encoded and
+        # restricted to literal IPv4/IPv6 addresses below).
+        client_ip = client_ip.strip()
+        if not re.fullmatch(r"[0-9a-fA-F:.%]+", client_ip):
+            return jsonify({"error": "Invalid IP address format"}), 400
+        url = f"https://ip-api.com/json/{urllib.parse.quote(client_ip)}?fields=status,country,city,isp,proxy,hosting,query"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, timeout=5) as response:
             result = json.loads(response.read().decode())

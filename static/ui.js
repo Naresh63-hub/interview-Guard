@@ -129,6 +129,16 @@ const notesEditor = document.getElementById("notes-editor");
 let localStream = null;
 let isMuted = false;
 let isVideoStopped = false;
+
+// Make these globally accessible for webrtc.js
+window.isMuted = isMuted;
+window.isVideoStopped = isVideoStopped;
+
+// Functions to update global state
+function updateGlobalMediaState() {
+    window.isMuted = isMuted;
+    window.isVideoStopped = isVideoStopped;
+}
 let suspiciousGazeEvents = 0;
 let totalGazeFrames = 0;
 let lookAwayFrames = 0;
@@ -761,8 +771,58 @@ if (chatForm) {
 
         appendChatMessage(currentDisplayName, message, "self");
         if (chatInput) chatInput.value = "";
+        
+        // Send message via socket if connected
+        if (typeof socket !== 'undefined' && socket && socket.connected) {
+            socket.emit("chat_message", {
+                meetingId: MEETING_ID,
+                sender: currentDisplayName,
+                message: message
+            });
+        }
     });
 }
+
+// Listen for incoming chat messages via socket
+function setupChatSocketListeners() {
+    if (typeof socket !== 'undefined' && socket) {
+        console.log("[Chat] Setting up chat socket listeners");
+        socket.on("chat_message", (data) => {
+            console.log("[Chat] Received chat message:", data);
+            const sender = data.sender || "Unknown";
+            const message = data.message || "";
+            const type = sender === currentDisplayName ? "self" : "other";
+            appendChatMessage(sender, message, type);
+        });
+    } else {
+        console.warn("[Chat] Socket not available for chat listeners");
+    }
+}
+
+// Setup chat listeners when socket is available
+function waitForSocketAndSetupChat() {
+    if (typeof socket !== 'undefined' && socket) {
+        setupChatSocketListeners();
+    } else {
+        console.log("[Chat] Waiting for socket to be initialized...");
+        // Wait for socket to be initialized
+        const checkSocketInterval = setInterval(() => {
+            if (typeof socket !== 'undefined' && socket) {
+                setupChatSocketListeners();
+                clearInterval(checkSocketInterval);
+            }
+        }, 100);
+        
+        // Clear interval after 10 seconds to prevent memory leak
+        setTimeout(() => {
+            clearInterval(checkSocketInterval);
+            console.warn("[Chat] Socket initialization timeout");
+        }, 10000);
+    }
+}
+
+// Initialize chat socket listeners
+waitForSocketAndSetupChat();
 
 if (btnNotes) {
     btnNotes.addEventListener("click", () => {
@@ -1438,8 +1498,8 @@ function makeElementDraggable(elmnt) {
         e.preventDefault();
         pos3 = e.clientX;
         pos4 = e.clientY;
-        document.onmouseup = closeDragElement;
-        document.onmousemove = elementDrag;
+        document.addEventListener('mouseup', closeDragElement);
+        document.addEventListener('mousemove', elementDrag);
         elmnt.style.cursor = 'grabbing';
     }
 
@@ -1468,8 +1528,8 @@ function makeElementDraggable(elmnt) {
     }
 
     function closeDragElement() {
-        document.onmouseup = null;
-        document.onmousemove = null;
+        document.removeEventListener('mouseup', closeDragElement);
+        document.removeEventListener('mousemove', elementDrag);
         elmnt.style.cursor = 'grab';
     }
     
@@ -1478,8 +1538,8 @@ function makeElementDraggable(elmnt) {
         const touch = e.touches[0];
         pos3 = touch.clientX;
         pos4 = touch.clientY;
-        document.ontouchend = closeDragTouch;
-        document.ontouchmove = elementTouchDrag;
+        document.addEventListener('touchend', closeDragTouch, {passive: false});
+        document.addEventListener('touchmove', elementTouchDrag, {passive: false});
         elmnt.style.cursor = 'grabbing';
     }
     
@@ -1512,8 +1572,8 @@ function makeElementDraggable(elmnt) {
     }
     
     function closeDragTouch() {
-        document.ontouchend = null;
-        document.ontouchmove = null;
+        document.removeEventListener('touchend', closeDragTouch);
+        document.removeEventListener('touchmove', elementTouchDrag);
         elmnt.style.cursor = 'grab';
     }
 }

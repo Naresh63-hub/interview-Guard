@@ -5,7 +5,9 @@ Handles database operations for the Intervue proctoring system.
 
 import os
 import hashlib
+import hmac
 import secrets
+import pyotp
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 from functools import wraps
@@ -17,6 +19,7 @@ from pymongo.errors import (
     ServerSelectionTimeoutError,
     DuplicateKeyError,
 )
+from werkzeug.security import generate_password_hash, check_password_hash
 
 # Load .env
 load_dotenv()
@@ -27,19 +30,42 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# Password hashing: PBKDF2 (via werkzeug). SHA-256+salt was too fast for
+# credential storage; PBKDF2 with the default 600k iterations is the OWASP-
+# recommended minimum for server-side hashing and needs no extra dependency.
+_HASH_METHOD = "pbkdf2:sha256"
+
+
 def hash_password(password: str) -> str:
-    """Hash password using SHA-256 with salt."""
-    salt = secrets.token_hex(16)
-    return f"{salt}${hashlib.sha256(f"{salt}{password}".encode()).hexdigest()}"
+    """Hash a password using PBKDF2 (werkzeug)."""
+    return generate_password_hash(password, method=_HASH_METHOD)
 
 
 def verify_password(password: str, hashed: str) -> bool:
-    """Verify password against hash."""
-    try:
-        salt, hash_value = hashed.split('$')
-        return hash_value == hashlib.sha256(f"{salt}{password}".encode()).hexdigest()
-    except:
+    """Verify a password against a stored hash.
+
+    Supports both the current PBKDF2 format and legacy `salt$sha256hex` hashes
+    created before the hashing upgrade, so existing accounts keep working and
+    are upgraded lazily on the next successful login by the caller.
+    """
+    if not hashed:
         return False
+    if not hashed.startswith(("pbkdf2:", "scrypt:", "bcrypt:")):
+        # Legacy format: hex-salted SHA-256 ("salt$digest")
+        try:
+            salt, hash_value = hashed.split("$", 1)
+            return hmac.compare_digest(
+                hash_value,
+                hashlib.sha256(f"{salt}{password}".encode()).hexdigest(),
+            )
+        except Exception:
+            return False
+    return check_password_hash(hashed, password)
+
+
+def password_needs_rehash(hashed: str) -> bool:
+    """True for legacy salted-SHA-256 hashes that should be re-hashed on login."""
+    return bool(hashed) and not hashed.startswith(("pbkdf2:", "scrypt:", "bcrypt:"))
 
 
 class MongoDBDatabase:
@@ -182,9 +208,14 @@ class MongoDBDatabase:
             )
             
             # Sessions (NEW - for session management)
+            # NOTE: sparse unique index — the same collection also stores
+            # meeting sessions (create_meeting_session) which have no
+            # session_token; a plain unique index would fail to build because
+            # every legacy/meeting doc with a missing field is indexed as null.
             self.db.sessions.create_index(
                 [("session_token", ASCENDING)],
-                unique=True
+                unique=True,
+                sparse=True,
             )
             
             self.db.sessions.create_index(
@@ -273,7 +304,10 @@ class MongoDBDatabase:
         
         try:
             user = self.db.users.find_one({
-                "username": username.lower(),
+                "$or": [
+                    {"username": username.lower()},
+                    {"email": username.lower()}
+                ],
                 "is_active": True
             })
             
@@ -282,7 +316,14 @@ class MongoDBDatabase:
             
             if not verify_password(password, user["password_hash"]):
                 return {"success": False, "error": "Invalid credentials"}
-            
+
+            # Lazy upgrade: re-hash legacy salted-SHA-256 accounts on login.
+            if password_needs_rehash(user["password_hash"]):
+                self.db.users.update_one(
+                    {"_id": user["_id"]},
+                    {"$set": {"password_hash": hash_password(password)}},
+                )
+
             # Update last login
             self.db.users.update_one(
                 {"_id": user["_id"]},
@@ -384,6 +425,25 @@ class MongoDBDatabase:
                 return {"success": False, "error": "User not found"}
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    def link_oauth_id(self, user_id: str, provider: str, oauth_id: str) -> bool:
+        """Attach a Google/GitHub OAuth ID to an existing user.
+
+        Used by the OAuth callbacks instead of touching the users collection
+        directly (which would break when MongoDB is unreachable).
+        """
+        if not self.is_connected():
+            return False
+        try:
+            from bson.objectid import ObjectId
+            result = self.db.users.update_one(
+                {"_id": ObjectId(user_id)},
+                {"$set": {f"{provider}_id": oauth_id}}
+            )
+            return result.modified_count > 0
+        except Exception as e:
+            print(f"[MongoDB] OAuth link error: {e}")
+            return False
     
     # ============================================================
     # SESSION MANAGEMENT (NEW)
@@ -569,11 +629,6 @@ class MongoDBDatabase:
             print(f"[MongoDB] TOTP verification error: {e}")
             return False
 
-            print("[MongoDB] Indexes created successfully.")
-
-        except Exception as e:
-            print(f"[MongoDB] Index creation error: {e}")
-
     # ============================================================
     # MEETING ROOM OPERATIONS
     # ============================================================
@@ -650,6 +705,25 @@ class MongoDBDatabase:
 
         except Exception as e:
             print(f"[MongoDB] Error getting meeting room: {e}")
+            return None
+
+    def get_latest_meeting_for_user(
+        self,
+        user_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Get the host's most recently created meeting room."""
+
+        if not self.is_connected():
+            return None
+
+        try:
+            return self.db.meeting_rooms.find_one(
+                {"metadata.user_id": user_id},
+                sort=[("created_at", -1)],
+            )
+
+        except Exception as e:
+            print(f"[MongoDB] Error getting latest meeting for user: {e}")
             return None
 
     def update_meeting_room(
@@ -1044,7 +1118,7 @@ class MongoDBDatabase:
     # SESSION OPERATIONS
     # ============================================================
 
-    def create_session(
+    def create_meeting_session(
         self,
         meeting_id: str,
         started_at: Optional[datetime] = None
@@ -1100,6 +1174,10 @@ class MongoDBDatabase:
                 "started_at",
                 ended_at
             )
+            # pymongo returns naive UTC datetimes by default; make it aware so
+            # the duration subtraction cannot raise an offset mismatch.
+            if started_at is not None and started_at.tzinfo is None:
+                started_at = started_at.replace(tzinfo=timezone.utc)
 
             duration = max(
                 0,
@@ -1329,8 +1407,305 @@ class MongoDBDatabase:
             return {}
 
 
+class InMemoryBackend:
+    """In-memory fallback for the user/auth subset of the database.
+
+    Activated automatically when MongoDB is unreachable so registration,
+    login (email or OAuth) and sessions keep working offline. This mirrors
+    the existing in-memory meeting-room fallback in state.py. Data is lost
+    when the process restarts.
+    """
+
+    def __init__(self):
+        self.users = {}
+        self.sessions = {}
+        self._next_id = 1
+
+    def _new_id(self) -> str:
+        user_id = str(self._next_id)
+        self._next_id += 1
+        return user_id
+
+    def create_user(self, username: str, email: str, password: str,
+                    full_name: str = "", role: str = "interviewer",
+                    google_id: str = None, github_id: str = None) -> Dict[str, Any]:
+        username = (username or "").strip().lower()
+        email = (email or "").strip().lower()
+        if not username or not email or not password:
+            return {"success": False, "error": "Username, email and password are required"}
+        if any(u["username"] == username or u["email"] == email
+               for u in self.users.values()):
+            return {"success": False, "error": "Username or email already exists"}
+        valid_roles = ["admin", "interviewer", "moderator"]
+        if role not in valid_roles:
+            role = "interviewer"
+        user = {
+            "_id": self._new_id(),
+            "username": username,
+            "email": email,
+            "password_hash": hash_password(password),
+            "full_name": full_name,
+            "role": role,
+            "is_active": True,
+            "created_at": utc_now(),
+            "last_login": None,
+            "mfa_enabled": False,
+            "mfa_secret": None,
+            "google_id": google_id,
+            "github_id": github_id,
+        }
+        self.users[user["_id"]] = user
+        return {
+            "success": True,
+            "user_id": user["_id"],
+            "username": username,
+            "email": email,
+            "role": role,
+        }
+
+    def authenticate_user(self, username: str, password: str) -> Dict[str, Any]:
+        username = (username or "").strip().lower()
+        user = next(
+            (u for u in self.users.values()
+             if u["username"] == username and u.get("is_active", True)),
+            None,
+        )
+        if not user or not verify_password(password, user["password_hash"]):
+            return {"success": False, "error": "Invalid credentials"}
+        # Lazy upgrade: re-hash legacy salted-SHA-256 accounts on login.
+        if password_needs_rehash(user["password_hash"]):
+            user["password_hash"] = hash_password(password)
+        user["last_login"] = utc_now()
+        return {
+            "success": True,
+            "user_id": user["_id"],
+            "username": user["username"],
+            "email": user["email"],
+            "full_name": user.get("full_name", ""),
+            "role": user["role"],
+            "mfa_enabled": user.get("mfa_enabled", False),
+        }
+
+    def get_user_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
+        user = self.users.get(str(user_id))
+        return dict(user) if user else None
+
+    def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+        email = (email or "").strip().lower()
+        user = next((u for u in self.users.values() if u["email"] == email), None)
+        return dict(user) if user else None
+
+    def get_all_users(self) -> List[Dict[str, Any]]:
+        users = []
+        for user in self.users.values():
+            safe = dict(user)
+            safe.pop("password_hash", None)
+            safe.pop("mfa_secret", None)
+            users.append(safe)
+        return users
+
+    def update_user_role(self, user_id: str, new_role: str) -> Dict[str, Any]:
+        valid_roles = ["admin", "interviewer", "moderator"]
+        if new_role not in valid_roles:
+            return {"success": False, "error": "Invalid role"}
+        user = self.users.get(str(user_id))
+        if not user:
+            return {"success": False, "error": "User not found"}
+        user["role"] = new_role
+        return {"success": True}
+
+    def delete_user(self, user_id: str) -> Dict[str, Any]:
+        user = self.users.pop(str(user_id), None)
+        if not user:
+            return {"success": False, "error": "User not found"}
+        return {"success": True}
+
+    def create_session(self, user_id: str, remember_me: bool = False) -> Dict[str, Any]:
+        if str(user_id) not in self.users:
+            return {"success": False, "error": "User not found"}
+        session_token = secrets.token_urlsafe(32)
+        expires_at = utc_now() + timedelta(days=7 if remember_me else 1)
+        self.sessions[session_token] = {
+            "user_id": str(user_id),
+            "created_at": utc_now(),
+            "expires_at": expires_at,
+        }
+        return {
+            "success": True,
+            "session_token": session_token,
+            "expires_at": expires_at.isoformat(),
+        }
+
+    def delete_session(self, session_token: str) -> bool:
+        return self.sessions.pop(session_token, None) is not None
+
+    def validate_session(self, session_token: str) -> Optional[Dict[str, Any]]:
+        session = self.sessions.get(session_token)
+        if not session:
+            return None
+        if session["expires_at"] < utc_now():
+            self.sessions.pop(session_token, None)
+            return None
+        user = self.get_user_by_id(session["user_id"])
+        if not user or not user.get("is_active", True):
+            return None
+        return {
+            "user_id": user["_id"],
+            "username": user["username"],
+            "email": user["email"],
+            "full_name": user.get("full_name", ""),
+            "role": user["role"],
+        }
+
+    def enable_mfa(self, user_id: str) -> Dict[str, Any]:
+        user = self.users.get(str(user_id))
+        if not user:
+            return {"success": False, "error": "User not found"}
+        secret = pyotp.random_base32()
+        user["mfa_enabled"] = True
+        user["mfa_secret"] = secret
+        user["mfa_enabled_at"] = utc_now()
+        return {
+            "success": True,
+            "secret": secret,
+            "qr_code_url": f"otpauth://totp/Intervue:{secret}?secret={secret}&issuer=Intervue",
+        }
+
+    def disable_mfa(self, user_id: str) -> Dict[str, Any]:
+        user = self.users.get(str(user_id))
+        if not user:
+            return {"success": False, "error": "User not found"}
+        user["mfa_enabled"] = False
+        user["mfa_secret"] = None
+        return {"success": True}
+
+    def verify_totp(self, user_id: str, totp_code: str) -> bool:
+        user = self.users.get(str(user_id))
+        if not user or not user.get("mfa_enabled") or not user.get("mfa_secret"):
+            return False
+        return pyotp.TOTP(user["mfa_secret"]).verify(totp_code, valid_window=1)
+
+    def link_oauth_id(self, user_id: str, provider: str, oauth_id: str) -> bool:
+        user = self.users.get(str(user_id))
+        if not user:
+            return False
+        user[f"{provider}_id"] = oauth_id
+        return True
+
+
+class DatabaseRouter:
+    """Routes database operations to MongoDB when available and to an
+    in-memory store when it is not, so user registration/login (email or
+    OAuth) keeps working without a live Atlas connection."""
+
+    def __init__(self):
+        self.mongo = MongoDBDatabase()
+        self.memory = InMemoryBackend()
+
+    @property
+    def connected(self) -> bool:
+        return self.mongo.connected
+
+    @property
+    def db(self):
+        return self.mongo.db
+
+    def connect(self) -> bool:
+        return self.mongo.connect()
+
+    def is_connected(self) -> bool:
+        return self.mongo.is_connected()
+
+    def _backend(self):
+        return self.mongo if self.mongo.is_connected() else self.memory
+
+    def create_user(self, *args, **kwargs):
+        return self._backend().create_user(*args, **kwargs)
+
+    def authenticate_user(self, *args, **kwargs):
+        return self._backend().authenticate_user(*args, **kwargs)
+
+    def get_user_by_email(self, *args, **kwargs):
+        return self._backend().get_user_by_email(*args, **kwargs)
+
+    def get_user_by_id(self, *args, **kwargs):
+        return self._backend().get_user_by_id(*args, **kwargs)
+
+    def get_all_users(self, *args, **kwargs):
+        return self._backend().get_all_users(*args, **kwargs)
+
+    def update_user_role(self, *args, **kwargs):
+        return self._backend().update_user_role(*args, **kwargs)
+
+    def delete_user(self, *args, **kwargs):
+        return self._backend().delete_user(*args, **kwargs)
+
+    def create_session(self, *args, **kwargs):
+        return self._backend().create_session(*args, **kwargs)
+
+    def delete_session(self, *args, **kwargs):
+        return self._backend().delete_session(*args, **kwargs)
+
+    def validate_session(self, *args, **kwargs):
+        return self._backend().validate_session(*args, **kwargs)
+
+    def enable_mfa(self, *args, **kwargs):
+        return self._backend().enable_mfa(*args, **kwargs)
+
+    def disable_mfa(self, *args, **kwargs):
+        return self._backend().disable_mfa(*args, **kwargs)
+
+    def verify_totp(self, *args, **kwargs):
+        return self._backend().verify_totp(*args, **kwargs)
+
+    def link_oauth_id(self, *args, **kwargs):
+        return self._backend().link_oauth_id(*args, **kwargs)
+
+    def get_latest_meeting_for_user(self, user_id):
+        """Most recent meeting room for a host. Mongo-only: in-memory rooms
+        are not indexed by user_id, so fall back to None when Mongo is down."""
+        if not self.mongo.is_connected():
+            return None
+        return self.mongo.get_latest_meeting_for_user(user_id)
+
+    # Meeting rooms / audit / analytics stay Mongo-backed; state.py already
+    # falls back to in-memory meeting rooms when MongoDB is unreachable.
+    def get_meeting_room(self, *args, **kwargs):
+        return self.mongo.get_meeting_room(*args, **kwargs)
+
+    def create_meeting_room(self, *args, **kwargs):
+        return self.mongo.create_meeting_room(*args, **kwargs)
+
+    def create_meeting_session(self, *args, **kwargs):
+        return self.mongo.create_meeting_session(*args, **kwargs)
+
+    def add_participant(self, *args, **kwargs):
+        return self.mongo.add_participant(*args, **kwargs)
+
+    def update_participant_activity(self, *args, **kwargs):
+        return self.mongo.update_participant_activity(*args, **kwargs)
+
+    def remove_participant(self, *args, **kwargs):
+        return self.mongo.remove_participant(*args, **kwargs)
+
+    def end_session(self, *args, **kwargs):
+        return self.mongo.end_session(*args, **kwargs)
+
+    def get_audit_logs(self, *args, **kwargs):
+        return self.mongo.get_audit_logs(*args, **kwargs)
+
+    def add_audit_log(self, *args, **kwargs):
+        return self.mongo.add_audit_log(*args, **kwargs)
+
+    def get_meeting_analytics(self, *args, **kwargs):
+        return self.mongo.get_meeting_analytics(*args, **kwargs)
+
+    def get_partner_analytics(self, *args, **kwargs):
+        return self.mongo.get_partner_analytics(*args, **kwargs)
+
+
 # ================================================================
 # GLOBAL DATABASE INSTANCE
 # ================================================================
 
-db = MongoDBDatabase()
+db = DatabaseRouter()

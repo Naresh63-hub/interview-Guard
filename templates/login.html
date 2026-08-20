@@ -441,10 +441,37 @@
             Intervue
         </div>
         
-        <div class="intervue-tabs">
-            <button class="intervue-tab active" data-tab="signin">Create Meeting</button>
-            <button class="intervue-tab" data-tab="signup">Create Account</button>
-            <button class="intervue-tab" data-tab="candidate">Join Interview</button>
+        <div class="intervue-tabs" id="main-tabs">
+            <button class="intervue-tab active" data-tab="signin">Host Login</button>
+            <button class="intervue-tab" data-tab="signup">Register</button>
+            <button class="intervue-tab" data-tab="candidate">Candidate Join</button>
+        </div>
+        
+        <!-- Authenticated View (Hidden by default) -->
+        <div id="authenticated-view" style="display: none; text-align: center; padding-top: 20px;">
+            <h2 class="intervue-title" id="welcome-message">Welcome back!</h2>
+            <p class="intervue-subtitle">Ready to host your next interview?</p>
+            
+            <button class="intervue-btn primary" onclick="createMeetingAutomatically()" id="auto-create-btn">
+                <i class="ph-fill ph-video-camera"></i> Generate Meeting Link
+            </button>
+            <div class="intervue-error" id="setup-error" style="margin-top: 10px;"></div>
+            <div class="intervue-loading" id="setup-loading" style="margin-top: 15px;">
+                <i class="ph-fill ph-spinner ph-spin"></i> Creating meeting...
+            </div>
+            
+            <div id="result-view" class="intervue-result" style="display: none; text-align: left; background: rgba(0,0,0,0.2); padding: 20px; border-radius: 12px; margin-top: 20px;">
+                <h3 style="margin-top:0; color: #fff;">Meeting created!</h3>
+                <label style="color: #cbd5e1; font-size: 0.9rem;">Candidate Invitation Link:</label>
+                <div class="intervue-copy-row" style="display: flex; gap: 10px; margin-top: 8px; margin-bottom: 20px;">
+                    <input type="text" id="meetingLink" class="intervue-input" readonly style="margin-bottom:0; flex: 1;">
+                    <button class="intervue-btn secondary" style="width:auto; margin-bottom:0;" onclick="copyLink()">Copy</button>
+                </div>
+                
+                <button class="intervue-btn primary" onclick="joinAsHost()" style="width: 100%;">Join Dashboard</button>
+            </div>
+            
+            <button class="intervue-btn secondary" onclick="logoutUser()" style="margin-top: 30px; background: transparent; border: 1px solid rgba(255,255,255,0.2);">Sign Out</button>
         </div>
         
         <!-- Create Meeting Tab -->
@@ -456,30 +483,30 @@
                 <button type="button" class="intervue-btn social google" onclick="socialLogin('google')">
                     <i class="ph-fill ph-google-logo social-icon"></i> Continue with Google
                 </button>
-                <button type="button" class="intervue-btn social github" onclick="socialLogin('github')">
-                    <i class="ph-fill ph-github-logo social-icon"></i> Continue with GitHub
-                </button>
             </div>
             
             <div class="social-divider">
                 <span>or continue with email</span>
             </div>
             
-            <form id="signin-form">
+            <form id="signin-form" autocomplete="off">
                 <div class="intervue-form-group">
                     <label for="signin-username">Username</label>
-                    <input type="text" id="signin-username" name="username" class="intervue-input" placeholder="Enter your username" required>
+                    <input type="text" id="signin-username" name="username" class="intervue-input" placeholder="Enter your username" required autocomplete="off">
                 </div>
                 
                 <div class="intervue-form-group">
                     <label for="signin-password">Password</label>
                     <div class="password-wrapper">
-                        <input type="password" id="signin-password" name="password" class="intervue-input" placeholder="Enter your password" required>
+                        <input type="password" id="signin-password" name="password" class="intervue-input" placeholder="Enter your password" required autocomplete="off">
                         <button type="button" class="password-toggle" onclick="togglePassword('signin-password', this)">
                             <i class="ph-fill ph-eye"></i>
                         </button>
                     </div>
-                    <div style="text-align: right; margin-top: 8px;">
+                    <div style="display: flex; justify-content: space-between; margin-top: 8px;">
+                        <label style="font-size: 0.85rem; color: #cbd5e1; cursor: pointer; display: flex; align-items: center; gap: 6px;">
+                            <input type="checkbox" onclick="document.getElementById('signin-password').type = this.checked ? 'text' : 'password'"> Show Password
+                        </label>
                         <a href="#" onclick="showForgotPassword(); return false;" style="color: #5568d3; font-size: 0.85rem; text-decoration: none;">Forgot Password?</a>
                     </div>
                 </div>
@@ -490,7 +517,7 @@
                 </div>
                 
                 <button type="submit" class="intervue-btn" id="signin-btn">
-                    <i class="ph-fill ph-video-camera"></i> Create Meeting
+                    <i class="ph-fill ph-sign-in"></i> Login
                 </button>
             </form>
             
@@ -509,35 +536,32 @@
                 <button type="button" class="intervue-btn social google" onclick="socialLogin('google')">
                     <i class="ph-fill ph-google-logo social-icon"></i> Sign up with Google
                 </button>
-                <button type="button" class="intervue-btn social github" onclick="socialLogin('github')">
-                    <i class="ph-fill ph-github-logo social-icon"></i> Sign up with GitHub
-                </button>
             </div>
             
             <div class="social-divider">
                 <span>or sign up with email</span>
             </div>
             
-            <form id="signup-form">
+            <form id="signup-form" autocomplete="off">
                 <div class="intervue-form-group">
                     <label for="signup-fullname">Full Name</label>
-                    <input type="text" id="signup-fullname" name="fullName" class="intervue-input" placeholder="Enter your full name" required>
+                    <input type="text" id="signup-fullname" name="fullName" class="intervue-input" placeholder="Enter your full name" required autocomplete="off">
                 </div>
                 
                 <div class="intervue-form-group">
                     <label for="signup-username">Username</label>
-                    <input type="text" id="signup-username" name="username" class="intervue-input" placeholder="Choose a username" required>
+                    <input type="text" id="signup-username" name="username" class="intervue-input" placeholder="Choose a username" required autocomplete="off">
                 </div>
                 
                 <div class="intervue-form-group">
                     <label for="signup-email">Email</label>
-                    <input type="email" id="signup-email" name="email" class="intervue-input" placeholder="Enter your email" required>
+                    <input type="email" id="signup-email" name="email" class="intervue-input" placeholder="Enter your email" required autocomplete="off">
                 </div>
                 
                 <div class="intervue-form-group">
                     <label for="signup-password">Password</label>
                     <div class="password-wrapper">
-                        <input type="password" id="signup-password" name="password" class="intervue-input" placeholder="Create a password (min 8 characters)" required>
+                        <input type="password" id="signup-password" name="password" class="intervue-input" placeholder="Create a password (min 8 characters)" required autocomplete="new-password">
                         <button type="button" class="password-toggle" onclick="togglePassword('signup-password', this)">
                             <i class="ph-fill ph-eye"></i>
                         </button>
@@ -547,10 +571,15 @@
                 <div class="intervue-form-group">
                     <label for="signup-confirm">Confirm Password</label>
                     <div class="password-wrapper">
-                        <input type="password" id="signup-confirm" name="confirmPassword" class="intervue-input" placeholder="Confirm your password" required>
+                        <input type="password" id="signup-confirm" name="confirmPassword" class="intervue-input" placeholder="Confirm your password" required autocomplete="new-password">
                         <button type="button" class="password-toggle" onclick="togglePassword('signup-confirm', this)">
                             <i class="ph-fill ph-eye"></i>
                         </button>
+                    </div>
+                    <div style="margin-top: 8px;">
+                        <label style="font-size: 0.85rem; color: #cbd5e1; cursor: pointer; display: flex; align-items: center; gap: 6px;">
+                            <input type="checkbox" onclick="document.getElementById('signup-password').type = this.checked ? 'text' : 'password'; document.getElementById('signup-confirm').type = this.checked ? 'text' : 'password';"> Show Passwords
+                        </label>
                     </div>
                 </div>
                 
@@ -616,294 +645,467 @@
     </div>
     
     <script>
-        // Check URL parameters to auto-select tab
-        const urlParams = new URLSearchParams(window.location.search);
-        const tabParam = urlParams.get('tab');
+        // Check authentication on page load
+        let currentMeetingId = "";
+        let generatedLink = "";
         
-        if (tabParam) {
-            const targetTab = document.querySelector(`[data-tab="${tabParam}"]`);
-            if (targetTab) {
-                targetTab.click();
+        const APP_ORIGIN =
+            window.location.port === "5500"
+                ? "https://127.0.0.1:5000"
+                : window.location.origin;
+
+        function showAuthenticatedView(user) {
+            document.getElementById('main-tabs').style.display = 'none';
+            document.querySelectorAll('.intervue-tab-content').forEach(c => c.style.display = 'none');
+            document.getElementById('authenticated-view').style.display = 'block';
+            if (user.full_name) {
+                document.getElementById('welcome-message').textContent = `Welcome back, ${user.full_name.split(' ')[0]}!`;
             }
         }
-        
-        // Social Login Handler
-        function socialLogin(provider) {
-            // Redirect to OAuth endpoint
-            const providerNames = {
-                'google': 'Google',
-                'github': 'GitHub'
-            };
+
+        async function createMeetingAutomatically() {
+            const btn = document.getElementById("auto-create-btn");
+            const loading = document.getElementById("setup-loading");
+            const error = document.getElementById("setup-error");
             
-            // Check if OAuth is configured by trying to redirect
-            const oauthUrl = `/api/auth/${provider}`;
+            btn.disabled = true;
+            loading.classList.add("show");
+            error.classList.remove("show");
             
-            // Show loading
-            const activeTab = document.querySelector('.intervue-tab.active').dataset.tab;
-            const errorElement = document.getElementById(activeTab + '-error');
-            const loadingElement = document.getElementById(activeTab + '-loading');
-            
-            loadingElement.classList.add('show');
-            
-            // Redirect to OAuth provider
-            window.location.href = oauthUrl;
-        }
-        
-        // Password Toggle Handler
-        function togglePassword(inputId, button) {
-            const input = document.getElementById(inputId);
-            const icon = button.querySelector('i');
-            
-            if (input.type === 'password') {
-                input.type = 'text';
-                icon.classList.remove('ph-eye');
-                icon.classList.add('ph-eye-slash');
-            } else {
-                input.type = 'password';
-                icon.classList.remove('ph-eye-slash');
-                icon.classList.add('ph-eye');
-            }
-        }
-        
-        // Forgot Password Modal
-        function showForgotPassword() {
-            document.getElementById('forgotPasswordModal').classList.add('show');
-            document.getElementById('forgot-error').classList.remove('show');
-            document.getElementById('forgot-success').classList.remove('show');
-            document.getElementById('forgot-email').value = '';
-        }
-        
-        function closeForgotPassword() {
-            document.getElementById('forgotPasswordModal').classList.remove('show');
-        }
-        
-        function sendResetLink() {
-            const email = document.getElementById('forgot-email').value.trim();
-            const errorElement = document.getElementById('forgot-error');
-            const successElement = document.getElementById('forgot-success');
-            
-            errorElement.classList.remove('show');
-            successElement.classList.remove('show');
-            
-            if (!email) {
-                errorElement.textContent = 'Please enter your email address';
-                errorElement.classList.add('show');
-                return;
-            }
-            
-            if (!email.includes('@')) {
-                errorElement.textContent = 'Please enter a valid email address';
-                errorElement.classList.add('show');
-                return;
-            }
-            
-            // Call the backend API
-            fetch('/api/auth/forgot-password', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email })
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    successElement.textContent = data.message;
-                    successElement.classList.add('show');
+            try {
+                const response = await fetch(`${APP_ORIGIN}/create-room`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ title: "Interview Session" })
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    currentMeetingId = data.meetingId;
+                    generatedLink = `${APP_ORIGIN}${data.link}`;
                     
-                    setTimeout(() => {
-                        closeForgotPassword();
-                    }, 3000);
+                    document.getElementById("meetingLink").value = generatedLink;
+                    
+                    btn.style.display = "none";
+                    document.getElementById("result-view").style.display = "block";
                 } else {
-                    errorElement.textContent = data.error || 'Failed to send reset link';
-                    errorElement.classList.add('show');
+                    const err = await response.json();
+                    error.textContent = err.error || "Failed to create meeting.";
+                    error.classList.add("show");
+                    btn.disabled = false;
                 }
-            })
-            .catch(error => {
-                console.error('Forgot password error:', error);
-                errorElement.textContent = 'Connection error. Please try again.';
-                errorElement.classList.add('show');
-            });
+            } catch (e) {
+                error.textContent = "Could not connect to backend.";
+                error.classList.add("show");
+                btn.disabled = false;
+            } finally {
+                loading.classList.remove("show");
+            }
         }
         
-        // Close modal when clicking outside
-        document.getElementById('forgotPasswordModal').addEventListener('click', function(e) {
-            if (e.target === this) {
-                closeForgotPassword();
+        function copyLink() {
+            const linkInput = document.getElementById("meetingLink");
+            linkInput.select();
+            document.execCommand("copy");
+            alert("Invitation copied to clipboard!");
+        }
+
+        function joinAsHost() {
+            if(currentMeetingId) {
+                window.location.href = `${APP_ORIGIN}/host_dashboard/${currentMeetingId}`;
             }
-        });
+        }
         
-        // Tab switching
-        const tabs = document.querySelectorAll('.intervue-tab');
-        const tabContents = document.querySelectorAll('.intervue-tab-content');
-        
-        tabs.forEach(tab => {
-            tab.addEventListener('click', () => {
-                const tabName = tab.dataset.tab;
+        async function logoutUser() {
+            try {
+                await fetch('/api/auth/logout', { method: 'POST' });
+                window.location.reload();
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        // Wait for DOM to be fully loaded
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('DOM loaded, initializing login page');
+            
+            // Check auth status
+            fetch('/api/auth/me')
+                .then(res => res.ok ? res.json() : Promise.reject('Not auth'))
+                .then(data => {
+                    if (data.success && data.user) {
+                        showAuthenticatedView(data.user);
+                    }
+                })
+                .catch(() => {
+                    // Not authenticated, do nothing
+                });
+            
+            // Check URL parameters to auto-select tab
+            const urlParams = new URLSearchParams(window.location.search);
+            const tabParam = urlParams.get('tab');
+            
+            if (tabParam) {
+                const targetTab = document.querySelector(`[data-tab="${tabParam}"]`);
+                if (targetTab) {
+                    targetTab.click();
+                }
+            }
+
+            // Surface OAuth failures returned by the backend as a redirect
+            const oauthError = urlParams.get('oauth_error');
+            if (oauthError) {
+                const signinError = document.getElementById('signin-error');
+                signinError.textContent = decodeURIComponent(oauthError);
+                signinError.classList.add('show');
+                setTimeout(() => signinError.classList.remove('show'), 8000);
+            }
+            
+            // Social Login Handler
+            function socialLogin(provider) {
+                // Redirect to OAuth endpoint
+                const providerNames = {
+                    'google': 'Google',
+                    'github': 'GitHub'
+                };
                 
-                tabs.forEach(t => t.classList.remove('active'));
-                tab.classList.add('active');
+                // Check if OAuth is configured by calling the status endpoint first
+                const activeTab = document.querySelector('.intervue-tab.active').dataset.tab;
+                const errorElement = document.getElementById(activeTab + '-error');
+                const loadingElement = document.getElementById(activeTab + '-loading');
                 
-                tabContents.forEach(content => {
-                    content.classList.remove('active');
-                    if (content.id === tabName + '-tab') {
-                        content.classList.add('active');
+                loadingElement.classList.add('show');
+                
+                // Check auth status first
+                fetch('/api/auth/status')
+                    .then(response => response.json())
+                    .then(data => {
+                        const isConfigured = provider === 'google' ? data.google_configured : data.github_configured;
+                        
+                        if (!isConfigured) {
+                            loadingElement.classList.remove('show');
+                            const redirectUri = provider === 'google'
+                                ? (data.google_redirect_uri || 'http://127.0.0.1:5000/api/auth/google/callback')
+                                : (data.github_redirect_uri || 'http://127.0.0.1:5000/api/auth/github/callback');
+                            errorElement.textContent = `${providerNames[provider]} OAuth not configured. Add ${provider.toUpperCase()}_CLIENT_ID and ${provider.toUpperCase()}_CLIENT_SECRET to .env and register this exact redirect URI: ${redirectUri}`;
+                            errorElement.classList.add('show');
+                            
+                            setTimeout(() => {
+                                errorElement.classList.remove('show');
+                            }, 5000);
+                        } else {
+                            // OAuth is configured, redirect to OAuth provider
+                            window.location.href = `/api/auth/${provider}`;
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Auth status check error:', error);
+                        loadingElement.classList.remove('show');
+                        errorElement.textContent = 'Connection error. Please try again.';
+                        errorElement.classList.add('show');
+                    });
+            }
+            
+            // Password Toggle Handler
+            function togglePassword(inputId, button) {
+                const input = document.getElementById(inputId);
+                const icon = button.querySelector('i');
+                
+                if (input.type === 'password') {
+                    input.type = 'text';
+                    icon.classList.remove('ph-eye');
+                    icon.classList.add('ph-eye-slash');
+                } else {
+                    input.type = 'password';
+                    icon.classList.remove('ph-eye-slash');
+                    icon.classList.add('ph-eye');
+                }
+            }
+            
+            // Forgot Password Modal
+            function showForgotPassword() {
+                document.getElementById('forgotPasswordModal').classList.add('show');
+                document.getElementById('forgot-error').classList.remove('show');
+                document.getElementById('forgot-success').classList.remove('show');
+                document.getElementById('forgot-email').value = '';
+            }
+            
+            function closeForgotPassword() {
+                document.getElementById('forgotPasswordModal').classList.remove('show');
+            }
+            
+            function sendResetLink() {
+                const email = document.getElementById('forgot-email').value.trim();
+                const errorElement = document.getElementById('forgot-error');
+                const successElement = document.getElementById('forgot-success');
+                
+                errorElement.classList.remove('show');
+                successElement.classList.remove('show');
+                
+                if (!email) {
+                    errorElement.textContent = 'Please enter your email address';
+                    errorElement.classList.add('show');
+                    return;
+                }
+                
+                if (!email.includes('@')) {
+                    errorElement.textContent = 'Please enter a valid email address';
+                    errorElement.classList.add('show');
+                    return;
+                }
+                
+                // Call the backend API
+                fetch('/api/auth/forgot-password', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        successElement.textContent = data.message;
+                        successElement.classList.add('show');
+                        
+                        setTimeout(() => {
+                            closeForgotPassword();
+                        }, 3000);
+                    } else {
+                        errorElement.textContent = data.error || 'Failed to send reset link';
+                        errorElement.classList.add('show');
+                    }
+                })
+                .catch(error => {
+                    console.error('Forgot password error:', error);
+                    errorElement.textContent = 'Connection error. Please try again.';
+                    errorElement.classList.add('show');
+                });
+            }
+            
+            // Close modal when clicking outside
+            document.getElementById('forgotPasswordModal').addEventListener('click', function(e) {
+                if (e.target === this) {
+                    closeForgotPassword();
+                }
+            });
+            
+            // Tab switching
+            const tabs = document.querySelectorAll('.intervue-tab');
+            const tabContents = document.querySelectorAll('.intervue-tab-content');
+            
+            tabs.forEach(tab => {
+                tab.addEventListener('click', () => {
+                    const tabName = tab.dataset.tab;
+                    
+                    tabs.forEach(t => t.classList.remove('active'));
+                    tab.classList.add('active');
+                    
+                    tabContents.forEach(content => {
+                        content.classList.remove('active');
+                        if (content.id === tabName + '-tab') {
+                            content.classList.add('active');
+                        }
+                    });
+                });
+            });
+            
+            // Create Meeting (Sign In)
+            const signinForm = document.getElementById('signin-form');
+            const signinBtn = document.getElementById('signin-btn');
+            const signinError = document.getElementById('signin-error');
+            const signinLoading = document.getElementById('signin-loading');
+            
+            if (signinForm) {
+                signinForm.addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    console.log('Sign in form submitted');
+                    
+                    const username = document.getElementById('signin-username').value.trim();
+                    const password = document.getElementById('signin-password').value;
+                    const rememberMe = document.getElementById('signin-remember').checked;
+                    
+                    console.log('Username:', username);
+                    console.log('Password length:', password.length);
+                    
+                    signinError.classList.remove('show');
+                    signinBtn.disabled = true;
+                    signinLoading.classList.add('show');
+                    
+                    try {
+                        const response = await fetch('/api/auth/login', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ username, password, rememberMe })
+                        });
+                        
+                        const data = await response.json();
+                        console.log('Login response:', data);
+                        
+                        if (response.ok && data.success) {
+                            // Go straight into the meeting — the backend
+                            // reuses the host's latest room or creates one
+                            // (see /host_dashboard landing route).
+                            window.location.href = '/host_dashboard';
+                        } else {
+                            signinError.textContent = data.error || 'Invalid credentials';
+                            signinError.classList.add('show');
+                        }
+                    } catch (error) {
+                        console.error('Login error:', error);
+                        signinError.textContent = 'Connection error. Please check if the server is running at http://127.0.0.1:5000';
+                        signinError.classList.add('show');
+                    } finally {
+                        signinBtn.disabled = false;
+                        signinLoading.classList.remove('show');
                     }
                 });
-            });
-        });
-        
-        // Create Meeting (Sign In)
-        const signinForm = document.getElementById('signin-form');
-        const signinBtn = document.getElementById('signin-btn');
-        const signinError = document.getElementById('signin-error');
-        const signinLoading = document.getElementById('signin-loading');
-        
-        signinForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
+            } else {
+                console.error('Sign in form not found');
+            }
             
-            const username = document.getElementById('signin-username').value.trim();
-            const password = document.getElementById('signin-password').value;
-            const rememberMe = document.getElementById('signin-remember').checked;
+            // Sign Up
+            const signupForm = document.getElementById('signup-form');
+            const signupBtn = document.getElementById('signup-btn');
+            const signupError = document.getElementById('signup-error');
+            const signupSuccess = document.getElementById('signup-success');
+            const signupLoading = document.getElementById('signup-loading');
             
-            signinError.classList.remove('show');
-            signinBtn.disabled = true;
-            signinLoading.classList.add('show');
-            
-            try {
-                const response = await fetch('/api/auth/login', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ username, password, rememberMe })
+            if (signupForm) {
+                signupForm.addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    console.log('Sign up form submitted');
+                    
+                    const fullName = document.getElementById('signup-fullname').value.trim();
+                    const username = document.getElementById('signup-username').value.trim();
+                    const email = document.getElementById('signup-email').value.trim();
+                    const password = document.getElementById('signup-password').value;
+                    const confirmPassword = document.getElementById('signup-confirm').value;
+                    
+                    console.log('Username:', username);
+                    console.log('Email:', email);
+                    
+                    signupError.classList.remove('show');
+                    signupSuccess.classList.remove('show');
+                    
+                    if (password !== confirmPassword) {
+                        signupError.textContent = 'Passwords do not match';
+                        signupError.classList.add('show');
+                        return;
+                    }
+                    
+                    if (password.length < 8) {
+                        signupError.textContent = 'Password must be at least 8 characters';
+                        signupError.classList.add('show');
+                        return;
+                    }
+                    
+                    if (username.length < 3) {
+                        signupError.textContent = 'Username must be at least 3 characters';
+                        signupError.classList.add('show');
+                        return;
+                    }
+                    
+                    signupBtn.disabled = true;
+                    signupLoading.classList.add('show');
+                    
+                    try {
+                        const response = await fetch('/api/auth/register', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ fullName, username, email, password })
+                        });
+                        
+                        const data = await response.json();
+                        console.log('Register response:', data);
+                        
+                        if (response.ok && data.success) {
+                            signupSuccess.textContent = 'Account created! Redirecting to login...';
+                            signupSuccess.classList.add('show');
+                            setTimeout(() => {
+                                // Switch to create meeting tab
+                                document.querySelector('[data-tab="signin"]').click();
+                                // Pre-fill username
+                                document.getElementById('signin-username').value = username;
+                            }, 2000);
+                        } else {
+                            signupError.textContent = data.error || 'Account creation failed';
+                            signupError.classList.add('show');
+                        }
+                    } catch (error) {
+                        console.error('Registration error:', error);
+                        signupError.textContent = 'Connection error. Please check if the server is running at http://127.0.0.1:5000';
+                        signupError.classList.add('show');
+                    } finally {
+                        signupBtn.disabled = false;
+                        signupLoading.classList.remove('show');
+                    }
                 });
-                
-                const data = await response.json();
-                
-                if (response.ok && data.success) {
-                    window.location.href = '/host_dashboard';
-                } else {
-                    signinError.textContent = data.error || 'Invalid credentials';
-                    signinError.classList.add('show');
-                }
-            } catch (error) {
-                console.error('Login error:', error);
-                signinError.textContent = 'Connection error. Please check if the server is running at http://127.0.0.1:5000';
-                signinError.classList.add('show');
-            } finally {
-                signinBtn.disabled = false;
-                signinLoading.classList.remove('show');
-            }
-        });
-        
-        // Sign Up
-        const signupForm = document.getElementById('signup-form');
-        const signupBtn = document.getElementById('signup-btn');
-        const signupError = document.getElementById('signup-error');
-        const signupSuccess = document.getElementById('signup-success');
-        const signupLoading = document.getElementById('signup-loading');
-        
-        signupForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            
-            const fullName = document.getElementById('signup-fullname').value.trim();
-            const username = document.getElementById('signup-username').value.trim();
-            const email = document.getElementById('signup-email').value.trim();
-            const password = document.getElementById('signup-password').value;
-            const confirmPassword = document.getElementById('signup-confirm').value;
-            
-            signupError.classList.remove('show');
-            signupSuccess.classList.remove('show');
-            
-            if (password !== confirmPassword) {
-                signupError.textContent = 'Passwords do not match';
-                signupError.classList.add('show');
-                return;
+            } else {
+                console.error('Sign up form not found');
             }
             
-            if (password.length < 8) {
-                signupError.textContent = 'Password must be at least 8 characters';
-                signupError.classList.add('show');
-                return;
-            }
+            // Quick Login (Candidate)
+            const candidateForm = document.getElementById('candidate-form');
+            const candidateBtn = document.getElementById('candidate-btn');
+            const candidateError = document.getElementById('candidate-error');
+            const candidateLoading = document.getElementById('candidate-loading');
             
-            if (username.length < 3) {
-                signupError.textContent = 'Username must be at least 3 characters';
-                signupError.classList.add('show');
-                return;
-            }
-            
-            signupBtn.disabled = true;
-            signupLoading.classList.add('show');
-            
-            try {
-                const response = await fetch('/api/auth/register', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ fullName, username, email, password })
+            if (candidateForm) {
+                candidateForm.addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    console.log('Candidate form submitted');
+                    
+                    let meetingId = document.getElementById('candidate-meeting').value.trim().toUpperCase();
+                    const candidateName = document.getElementById('candidate-name').value.trim();
+                    
+                    // Candidates often paste the full invite URL instead of
+                    // just the ID — extract the meeting id from it.
+                    const pastedUrl = meetingId.match(/\/meet\/([A-Z0-9]{8})/);
+                    if (pastedUrl) meetingId = pastedUrl[1];
+                    
+                    candidateError.classList.remove('show');
+                    candidateBtn.disabled = true;
+                    candidateLoading.classList.add('show');
+                    
+                    try {
+                        const response = await fetch('/api/candidate/join', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ meetingId, displayName: candidateName })
+                        });
+                        
+                        const data = await response.json();
+                        console.log('Candidate join response:', data);
+                        
+                        if (response.ok && data.success) {
+                            window.location.href = '/candidate_dashboard/' + data.meetingId;
+                        } else {
+                            candidateError.textContent = data.error || 'Could not join meeting. Please check the meeting ID.';
+                            candidateError.classList.add('show');
+                        }
+                    } catch (error) {
+                        console.error('Candidate join error:', error);
+                        candidateError.textContent = 'Connection error. Please check if the server is running at http://127.0.0.1:5000';
+                        candidateError.classList.add('show');
+                    } finally {
+                        candidateBtn.disabled = false;
+                        candidateLoading.classList.remove('show');
+                    }
                 });
-                
-                const data = await response.json();
-                
-                if (response.ok && data.success) {
-                    signupSuccess.textContent = 'Account created! Redirecting to login...';
-                    signupSuccess.classList.add('show');
-                    setTimeout(() => {
-                        // Switch to create meeting tab
-                        document.querySelector('[data-tab="signin"]').click();
-                        // Pre-fill username
-                        document.getElementById('signin-username').value = username;
-                    }, 2000);
-                } else {
-                    signupError.textContent = data.error || 'Account creation failed';
-                    signupError.classList.add('show');
-                }
-            } catch (error) {
-                console.error('Registration error:', error);
-                signupError.textContent = 'Connection error. Please check if the server is running at http://127.0.0.1:5000';
-                signupError.classList.add('show');
-            } finally {
-                signupBtn.disabled = false;
-                signupLoading.classList.remove('show');
+            } else {
+                console.error('Candidate form not found');
             }
-        });
-        
-        // Quick Login (Candidate)
-        const candidateForm = document.getElementById('candidate-form');
-        const candidateBtn = document.getElementById('candidate-btn');
-        const candidateError = document.getElementById('candidate-error');
-        const candidateLoading = document.getElementById('candidate-loading');
-        
-        candidateForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
             
-            const meetingId = document.getElementById('candidate-meeting').value.trim().toUpperCase();
-            const candidateName = document.getElementById('candidate-name').value.trim();
-            
-            candidateError.classList.remove('show');
-            candidateBtn.disabled = true;
-            candidateLoading.classList.add('show');
-            
-            try {
-                const response = await fetch('/api/candidate/join', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ meetingId, candidateName })
-                });
-                
-                const data = await response.json();
-                
-                if (response.ok && data.success) {
-                    window.location.href = '/candidate_dashboard';
-                } else {
-                    candidateError.textContent = data.error || 'Could not join meeting. Please check the meeting ID.';
-                    candidateError.classList.add('show');
-                }
-            } catch (error) {
-                console.error('Candidate join error:', error);
-                candidateError.textContent = 'Connection error. Please check if the server is running at http://127.0.0.1:5000';
-                candidateError.classList.add('show');
-            } finally {
-                candidateBtn.disabled = false;
-                candidateLoading.classList.remove('show');
-            }
+            console.log('Login page initialization complete');
+
+            // Expose inline-handler functions on window so the inline onclick="..."
+            // attributes in the HTML can resolve them (inline handlers only see
+            // global names, so defining them here in the callback would leave the
+            // buttons dead).
+            window.socialLogin = socialLogin;
+            window.togglePassword = togglePassword;
+            window.showForgotPassword = showForgotPassword;
+            window.closeForgotPassword = closeForgotPassword;
+            window.sendResetLink = sendResetLink;
         });
     </script>
 </body>

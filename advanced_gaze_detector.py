@@ -483,7 +483,11 @@ class AdvancedGazeDetector:
                 self.pose_autoencoder = HeadPoseAutoencoder(input_dim)
                 self.pose_autoencoder.load_state_dict(checkpoint["model_state"])
                 self.pose_autoencoder.eval()
-                print(f"[OK] Loaded head pose autoencoder with threshold: {self.pose_threshold:.4f}")
+                try:
+                    threshold_val = float(self.pose_threshold)
+                except (TypeError, ValueError):
+                    threshold_val = self.pose_threshold
+                print(f"[OK] Loaded head pose autoencoder with threshold: {threshold_val}")
             except Exception as e:
                 self.pose_autoencoder = None
                 print(f"[FAIL] Failed to load head pose autoencoder: {e}")

@@ -45,6 +45,25 @@ def get_meeting_room(meeting_id):
             return standardized_room
     return meeting_rooms.get(meeting_id.upper())
 
+def get_latest_meeting_for_user(user_id):
+    """Get the host's most recently created meeting room (Mongo only)."""
+    if not db.connected or not user_id:
+        return None
+    room = db.get_latest_meeting_for_user(user_id)
+    if not room:
+        return None
+    room_id = room.get("meeting_id", "").upper()
+    return {
+        "id": room_id,
+        "title": room.get("title", ""),
+        "host": room.get("host", ""),
+        "createdAt": room.get("created_at", time.time()),
+        "participants": room.get("participants", []),
+        "status": room.get("status", "waiting"),
+        "metadata": room.get("metadata", {}),
+        "proctoringSettings": room.get("proctoring_settings", {})
+    }
+
 def create_meeting_room(meeting_id, host, title, metadata=None):
     """Create meeting room in MongoDB and sync to in-memory."""
     if db.connected:
@@ -82,17 +101,23 @@ def add_participant(meeting_id, user_id, user_name, role, socket_id=None):
     """Add participant to MongoDB and sync to in-memory."""
     if db.connected:
         db.add_participant(meeting_id, user_id, user_name, role, socket_id)
-    # Sync to in-memory
+    # Sync to in-memory (dedupe: sockets.py already appends a `socketId`
+    # entry, so never create a second row for the same socket).
     room = get_meeting_room(meeting_id.upper())
     if room:
         participant = {
             "user_id": user_id,
             "user_name": user_name,
             "role": role,
-            "socket_id": socket_id,
+            "socketId": socket_id,
             "joinedAt": time.time()
         }
-        room["participants"].append(participant)
+        existing = [
+            p for p in room["participants"]
+            if (p.get("socketId") or p.get("socket_id")) == socket_id
+        ]
+        if not existing:
+            room["participants"].append(participant)
 
 def update_participant_activity(meeting_id, user_id):
     """Update participant activity in MongoDB."""
@@ -115,12 +140,14 @@ def add_audit_log(meeting_id, event_type, title, message, confidence="", is_crit
 
 def start_session(meeting_id):
     """Start session in MongoDB."""
+    global session_started_at
     if db.connected:
-        db.create_session(meeting_id)
+        db.create_meeting_session(meeting_id)
     session_started_at = time.time()
 
 def end_session(meeting_id):
     """End session in MongoDB."""
+    global session_started_at
     if db.connected:
         db.end_session(meeting_id)
     session_started_at = None
