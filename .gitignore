@@ -23,11 +23,9 @@ ssl.key
 .render.yaml
 requirements-training.txt
 embed-demo.html
-test_*.py
 .freebuff/
 .venv_old/
 .env
 node_modules/
 package-lock.json
 package.json
-test.js

@@ -469,8 +469,8 @@ def create_room():
         # Fall back to password-based auth for backward compatibility
         data = request.get_json(silent=True) or {}
         password = data.get("password", "").strip()
-        expected_password = os.getenv("HOST_PASSWORD", "admin123")
-        if not hmac.compare_digest(password, expected_password):
+        expected_password = os.getenv("HOST_PASSWORD")
+        if not expected_password or not hmac.compare_digest(password, expected_password):
             return jsonify({"error": "Invalid host credentials"}), 401
 
     meeting_id, signed_link = _create_meeting(data)
@@ -505,7 +505,7 @@ def _create_meeting(data):
     # Log room creation to audit log
     state.add_audit_log(meeting_id, "room_created", "Meeting Room Created", 
                      f"Room {meeting_id} created by {host_name} ({session.get('role', 'interviewer')})", 
-                     confidence="High", is_critical=False)
+                     confidence=1.0, is_critical=False)
     
     return meeting_id, signed_link
 
@@ -797,10 +797,27 @@ def ai_insights():
 
 @bp.route("/gaze", methods=["GET"])
 def gaze():
-    return jsonify(state.current_gaze)
+    if not _is_candidate_request() and not _is_host_request():
+        return jsonify({"error": "Session required"}), 403
+    meeting_id = _request_meeting_id()
+    if not meeting_id:
+        return jsonify({"error": "No meeting"}), 400
+    
+    gaze_state = state.current_gaze.get(meeting_id, {
+        "direction": "WAITING",
+        "lookingAway": False,
+        "faceDetected": False,
+        "timestamp": time.time(),
+    }) if isinstance(state.current_gaze, dict) and meeting_id in state.current_gaze else {
+        "direction": "WAITING",
+        "lookingAway": False,
+        "faceDetected": False,
+        "timestamp": time.time(),
+    }
+    return jsonify(gaze_state)
 
 @bp.route("/gaze-frame", methods=["POST", "OPTIONS"])
-@limiter.limit("10 per second")  # Limit frame analysis to prevent abuse
+@limiter.limit("10 per second")
 def gaze_frame():
     if request.method == "OPTIONS":
         return jsonify({}), 200
@@ -813,9 +830,13 @@ def gaze_frame():
         return jsonify({"error": decode_error}), 400
 
     try:
-        with gaze_detector.meeting_locks.get(_request_meeting_id()):
-            state.current_gaze = gaze_detector.analyze_frame(frame)
-        return jsonify(state.current_gaze)
+        meeting_id = _request_meeting_id()
+        with gaze_detector.meeting_locks.get(meeting_id):
+            if not isinstance(state.current_gaze, dict) or "direction" in state.current_gaze:
+                state.current_gaze = {}
+            res = gaze_detector.analyze_frame(frame)
+            state.current_gaze[meeting_id] = res
+        return jsonify(res)
 
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500

@@ -24,7 +24,8 @@
                 if (data.success) {
                     window.location.href = '/host_dashboard';
                 } else {
-                    document.body.innerHTML = `<h3>Error: ${data.error}</h3><a href='/'>Go Back</a>`;
+                    document.body.innerHTML = `<h3>Error: <span id="err-msg"></span></h3><a href='/'>Go Back</a>`;
+                    document.getElementById('err-msg').textContent = data.error;
                 }
             })
             .catch(err => {
@@ -35,7 +36,8 @@
             const queryParams = new URLSearchParams(window.location.search);
             const error = queryParams.get('error_description') || queryParams.get('error');
             if (error) {
-                document.body.innerHTML = `<h3>OAuth Error: ${error}</h3><a href='/'>Go Back</a>`;
+                document.body.innerHTML = `<h3>OAuth Error: <span id="err-msg"></span></h3><a href='/'>Go Back</a>`;
+                document.getElementById('err-msg').textContent = error;
             } else {
                 document.body.innerHTML = `<h3>No token found.</h3><a href='/'>Go Back</a>`;
             }

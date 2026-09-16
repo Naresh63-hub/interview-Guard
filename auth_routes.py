@@ -84,7 +84,7 @@ def login_user():
         session['user_id'] = auth_result["user_id"]
         session['role'] = auth_result["role"]
         session['full_name'] = auth_result["full_name"]
-        session['access_token'] = auth_result["access_token"]
+        
         session['authenticated'] = True
         
         return jsonify({
@@ -108,6 +108,7 @@ def logout_user():
 @login_required
 def get_current_user():
     return jsonify({
+        "success": True,
         "authenticated": True,
         "user": {
             "id": session.get('user_id'),
@@ -130,7 +131,8 @@ def google_login():
         })
         return redirect(res.url)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        print(f"Auth error: {e}")
+        return jsonify({"error": "An error occurred during authentication."}), 500
 
 @auth_bp.route("/google/callback")
 def google_callback():
@@ -144,11 +146,12 @@ def google_callback():
                 session['user_id'] = user.id
                 session['role'] = user.user_metadata.get("role", "interviewer")
                 session['full_name'] = user.user_metadata.get("full_name", user.email)
-                session['access_token'] = res.session.access_token
+                
                 session['authenticated'] = True
                 return redirect(url_for('main.host_dashboard_landing'))
         except Exception as e:
-            return f"<h3>Authentication Error</h3><p>{str(e)}</p><a href='/'>Go Back</a>"
+            print(f"Auth error: {e}")
+            return f"<h3>Authentication Error</h3><p>An error occurred.</p><a href='/'>Go Back</a>"
             
     # Fallback: Render the frontend page which will extract the #access_token from the URL fragment
     return render_template("oauth_callback.html")
@@ -169,12 +172,13 @@ def oauth_save():
             session['user_id'] = user.id
             session['role'] = user.user_metadata.get("role", "interviewer")
             session['full_name'] = user.user_metadata.get("full_name", user.email)
-            session['access_token'] = token
+            
             session['authenticated'] = True
             return jsonify({"success": True})
         return jsonify({"error": "Invalid token"}), 401
     except Exception as e:
-        return jsonify({"error": str(e)}), 401
+        print(f"Auth error: {e}")
+        return jsonify({"error": "Unauthorized"}), 401
 
 @auth_bp.route("/status", methods=["GET", "OPTIONS"])
 def auth_status():
@@ -192,7 +196,8 @@ def forgot_password():
         db.supabase.auth.reset_password_email(email)
         return jsonify({"success": True, "message": "If the email exists, a password reset link has been sent."}), 200
     except Exception as e:
-        return jsonify({"error": str(e)}), 400
+        print(f"Auth error: {e}")
+        return jsonify({"error": "Bad request"}), 400
 def register_auth_routes(app):
     auth_limiter.init_app(app)
     init_oauth(app)

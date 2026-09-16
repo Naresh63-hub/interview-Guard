@@ -522,7 +522,7 @@
             </form>
             
             <div class="intervue-loading" id="signin-loading">
-                <i class="ph-fill ph-spinner ph-spin"></i> Creating meeting...
+                <i class="ph-fill ph-spinner ph-spin"></i> Authenticating...
             </div>
         </div>
         
@@ -889,7 +889,6 @@
                     const rememberMe = document.getElementById('signin-remember').checked;
                     
                     console.log('Username:', username);
-                    console.log('Password length:', password.length);
                     
                     signinError.classList.remove('show');
                     signinBtn.disabled = true;

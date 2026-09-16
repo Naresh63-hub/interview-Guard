@@ -47,10 +47,13 @@ session_cookie_secure = os.getenv(
     "SESSION_COOKIE_SECURE", "0"
 ).strip().lower() in ("1", "true", "yes")
 
+from datetime import timedelta
+
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=session_cookie_secure,
+    PERMANENT_SESSION_LIFETIME=timedelta(hours=1),
 
     # Raw frame/audio uploads:
     # A 640x480 JPEG is typically ~50-150KB and PCM audio is tens of KB.

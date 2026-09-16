@@ -130,7 +130,8 @@ class SupabaseDatabase:
             if res.data:
                 return res.data[0]
             return None
-        except:
+        except Exception as e:
+            print(f"[DB Error] {e}")
             return None
 
     # ====================
@@ -141,8 +142,10 @@ class SupabaseDatabase:
         try:
             self.supabase.table("participants").insert({
                 "meeting_id": meeting_id,
+                "user_id": user_id,
                 "name": name,
                 "role": role,
+                "socket_id": socket_id,
                 "status": "joined"
             }).execute()
             return True
@@ -154,7 +157,8 @@ class SupabaseDatabase:
         try:
             self.supabase.table("participants").update({"last_active": utc_now().isoformat()}).eq("meeting_id", meeting_id).eq("user_id", user_id).execute()
             return True
-        except:
+        except Exception as e:
+            print(f"[DB Error] {e}")
             return False
 
     def remove_participant(self, meeting_id: str, user_id: str) -> bool:
@@ -165,7 +169,8 @@ class SupabaseDatabase:
                 "leave_time": utc_now().isoformat()
             }).eq("meeting_id", meeting_id).eq("user_id", user_id).execute()
             return True
-        except:
+        except Exception as e:
+            print(f"[DB Error] {e}")
             return False
 
     # ====================
@@ -184,7 +189,8 @@ class SupabaseDatabase:
                 "metadata": metadata or {}
             }).execute()
             return True
-        except:
+        except Exception as e:
+            print(f"[DB Error] {e}")
             return False
 
     def get_audit_logs(self, meeting_id: str, limit: int = 50) -> List[Dict[str, Any]]:
@@ -192,7 +198,8 @@ class SupabaseDatabase:
         try:
             res = self.supabase.table("audit_logs").select("*").eq("meeting_id", meeting_id).order("timestamp", desc=True).limit(limit).execute()
             return res.data
-        except:
+        except Exception as e:
+            print(f"[DB Error] {e}")
             return []
 
     # ====================
@@ -206,7 +213,8 @@ class SupabaseDatabase:
                 "status": "active"
             }).execute()
             return True
-        except:
+        except Exception as e:
+            print(f"[DB Error] {e}")
             return False
 
     def end_session(self, meeting_id: str) -> bool:
@@ -217,7 +225,8 @@ class SupabaseDatabase:
                 "ended_at": utc_now().isoformat()
             }).eq("meeting_id", meeting_id).eq("status", "active").execute()
             return True
-        except:
+        except Exception as e:
+            print(f"[DB Error] {e}")
             return False
 
     def get_meeting_analytics(self, meeting_id: str) -> Dict[str, Any]:

@@ -136,7 +136,7 @@ def remove_participant(meeting_id, user_id):
     if room:
         room["participants"] = [p for p in room["participants"] if p.get("user_id") != user_id]
 
-def add_audit_log(meeting_id, event_type, title, message, confidence="", is_critical=False, metadata=None):
+def add_audit_log(meeting_id, event_type, title, message, confidence=None, is_critical=False, metadata=None):
     """Add audit log to MongoDB."""
     if db.connected:
         db.add_audit_log(meeting_id, event_type, title, message, confidence, is_critical, metadata)
