@@ -16,12 +16,14 @@ current_gaze = {
     "timestamp": time.time(),
 }
 
-# MongoDB database instance
+# Database instance
 try:
-    db.connect()
-    print("[State] MongoDB connected successfully")
+    if db.connect():
+        print("[State] Supabase connected successfully")
+    else:
+        print("[State] Supabase connection failed, using in-memory fallback")
 except Exception as e:
-    print(f"[State] MongoDB connection failed, using in-memory fallback: {e}")
+    print(f"[State] Supabase connection error: {e}")
 
 def get_meeting_room(meeting_id):
     """Get meeting room from MongoDB or fallback to in-memory."""
@@ -30,12 +32,13 @@ def get_meeting_room(meeting_id):
         if room:
             # Convert MongoDB structure to match expected structure
             room_id = meeting_id.upper()
+            existing_room = meeting_rooms.get(room_id, {})
             standardized_room = {
                 "id": room_id,
                 "title": room.get("title", ""),
                 "host": room.get("host", ""),
                 "createdAt": room.get("created_at", time.time()),
-                "participants": room.get("participants", []),
+                "participants": existing_room.get("participants", []),
                 "status": room.get("status", "waiting"),
                 "metadata": room.get("metadata", {}),
                 "proctoringSettings": room.get("proctoring_settings", {})

@@ -214,5 +214,5 @@ if __name__ == "__main__":
         port=port,
         debug=debug_mode,
         use_reloader=False,
-        allow_unsafe_werkzeug=debug_mode,
+        allow_unsafe_werkzeug=True,
     )

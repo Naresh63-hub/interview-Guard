@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Logging in...</title>
+</head>
+<body>
+    <h3>Authenticating, please wait...</h3>
+    <script>
+        // Supabase implicit flow puts tokens in the URL hash fragment
+        const hash = window.location.hash.substring(1);
+        const params = new URLSearchParams(hash);
+        const accessToken = params.get('access_token');
+        const refreshToken = params.get('refresh_token');
+
+        if (accessToken) {
+            fetch('/api/auth/oauth_save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ access_token: accessToken, refresh_token: refreshToken })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    window.location.href = '/host_dashboard';
+                } else {
+                    document.body.innerHTML = `<h3>Error: ${data.error}</h3><a href='/'>Go Back</a>`;
+                }
+            })
+            .catch(err => {
+                document.body.innerHTML = `<h3>Error saving session.</h3><a href='/'>Go Back</a>`;
+            });
+        } else {
+            // Check if there's an error query param
+            const queryParams = new URLSearchParams(window.location.search);
+            const error = queryParams.get('error_description') || queryParams.get('error');
+            if (error) {
+                document.body.innerHTML = `<h3>OAuth Error: ${error}</h3><a href='/'>Go Back</a>`;
+            } else {
+                document.body.innerHTML = `<h3>No token found.</h3><a href='/'>Go Back</a>`;
+            }
+        }
+    </script>
+</body>
+</html>

@@ -762,49 +762,14 @@
             }
             
             // Social Login Handler
-            function socialLogin(provider) {
-                // Redirect to OAuth endpoint
-                const providerNames = {
-                    'google': 'Google',
-                    'github': 'GitHub'
-                };
-                
-                // Check if OAuth is configured by calling the status endpoint first
-                const activeTab = document.querySelector('.intervue-tab.active').dataset.tab;
-                const errorElement = document.getElementById(activeTab + '-error');
-                const loadingElement = document.getElementById(activeTab + '-loading');
-                
-                loadingElement.classList.add('show');
-                
-                // Check auth status first
-                fetch('/api/auth/status')
-                    .then(response => response.json())
-                    .then(data => {
-                        const isConfigured = provider === 'google' ? data.google_configured : data.github_configured;
-                        
-                        if (!isConfigured) {
-                            loadingElement.classList.remove('show');
-                            const redirectUri = provider === 'google'
-                                ? (data.google_redirect_uri || 'http://127.0.0.1:5000/api/auth/google/callback')
-                                : (data.github_redirect_uri || 'http://127.0.0.1:5000/api/auth/github/callback');
-                            errorElement.textContent = `${providerNames[provider]} OAuth not configured. Add ${provider.toUpperCase()}_CLIENT_ID and ${provider.toUpperCase()}_CLIENT_SECRET to .env and register this exact redirect URI: ${redirectUri}`;
-                            errorElement.classList.add('show');
-                            
-                            setTimeout(() => {
-                                errorElement.classList.remove('show');
-                            }, 5000);
-                        } else {
-                            // OAuth is configured, redirect to OAuth provider
-                            window.location.href = `/api/auth/${provider}`;
-                        }
-                    })
-                    .catch(error => {
-                        console.error('Auth status check error:', error);
-                        loadingElement.classList.remove('show');
-                        errorElement.textContent = 'Connection error. Please try again.';
-                        errorElement.classList.add('show');
-                    });
-            }
+            window.socialLogin = function(provider) {
+                const btn = document.querySelector(`.intervue-btn.${provider}`);
+                if (btn) {
+                    btn.innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Connecting...`;
+                    btn.disabled = true;
+                }
+                window.location.href = `/api/auth/${provider}`;
+            };
             
             // Password Toggle Handler
             function togglePassword(inputId, button) {

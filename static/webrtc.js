@@ -629,29 +629,29 @@ async function startWebcam() {
 
         try {
             localStream = await navigator.mediaDevices.getUserMedia({
-            window.localStream = localStream; // Make globally accessible
                 video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
                 audio: {
                     echoCancellation: true,
                     noiseSuppression: true,
-                    autoGainControl: true
+                    autoGainControl: true,
                 },
             });
+            window.localStream = localStream; // Make globally accessible
         } catch {
             console.warn("High-res video failed, falling back to basic constraints.");
             try {
                 localStream = await navigator.mediaDevices.getUserMedia({
-            window.localStream = localStream; // Make globally accessible
                     video: true,
                     audio: true,
                 });
+                window.localStream = localStream; // Make globally accessible
             } catch {
                 console.warn("Video+Audio failed, falling back to Video only.");
                 localStream = await navigator.mediaDevices.getUserMedia({
-            window.localStream = localStream; // Make globally accessible
                     video: true,
                     audio: false,
                 });
+                window.localStream = localStream; // Make globally accessible
             }
         }
 

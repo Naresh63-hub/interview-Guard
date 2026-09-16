@@ -130,6 +130,8 @@ def register_sockets(socketio):
 
     @socketio.on("offer")
     def on_offer(data):
+        from flask_socketio import rooms
+        if len(rooms(request.sid)) <= 1: return
         emit(
             "offer",
             {"sdp": data.get("sdp"), "from": request.sid},
@@ -138,6 +140,8 @@ def register_sockets(socketio):
 
     @socketio.on("answer")
     def on_answer(data):
+        from flask_socketio import rooms
+        if len(rooms(request.sid)) <= 1: return
         emit(
             "answer",
             {"sdp": data.get("sdp"), "from": request.sid},
@@ -146,6 +150,8 @@ def register_sockets(socketio):
 
     @socketio.on("ice_candidate")
     def on_ice_candidate(data):
+        from flask_socketio import rooms
+        if len(rooms(request.sid)) <= 1: return
         emit(
             "ice_candidate",
             {"candidate": data.get("candidate"), "from": request.sid},
@@ -166,6 +172,7 @@ def register_sockets(socketio):
     @socketio.on("chat_message")
     def on_chat_message(data):
         meeting_id = (data.get("meetingId") or "").upper()
+        if not _participant_role(meeting_id): return
         emit(
             "chat_message",
             {

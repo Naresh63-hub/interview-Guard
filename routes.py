@@ -24,6 +24,7 @@ limiter = Limiter(key_func=get_remote_address, default_limits=["100 per minute"]
 bp = Blueprint('main', __name__)
 
 def register_routes(app):
+    limiter.init_app(app)
     app.register_blueprint(bp)
 
 # --------------------------------------------------------------------------- #
@@ -644,7 +645,7 @@ def get_partner_analytics(partner_id):
     return jsonify(analytics)
 
 @bp.route("/api/session/<meeting_id>/start", methods=["POST"])
-def start_session():
+def start_session(meeting_id):
     """Start a session record in MongoDB."""
     if request.method == "OPTIONS":
         return jsonify({}), 200
@@ -660,7 +661,7 @@ def start_session():
     return jsonify({"success": True, "meeting_id": meeting_id})
 
 @bp.route("/api/session/<meeting_id>/end", methods=["POST"])
-def end_session():
+def end_session(meeting_id):
     """End a session record in MongoDB."""
     if request.method == "OPTIONS":
         return jsonify({}), 200
