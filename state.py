@@ -5,7 +5,7 @@ from database import db
 meetings = []
 active_participants = {}
 meeting_rooms = {}
-session_started_at = None
+session_started_at = {}
 SESSION_TIMEOUT_SECONDS = 300
 calibration_samples = []
 
@@ -143,15 +143,13 @@ def add_audit_log(meeting_id, event_type, title, message, confidence=None, is_cr
 
 def start_session(meeting_id):
     """Start session in MongoDB."""
-    global session_started_at
     if db.connected:
         db.create_meeting_session(meeting_id)
-    session_started_at = time.time()
+    session_started_at[meeting_id] = time.time()
 
 def end_session(meeting_id):
     """End session in MongoDB."""
-    global session_started_at
     if db.connected:
         db.end_session(meeting_id)
-    session_started_at = None
+    session_started_at.pop(meeting_id, None)
 

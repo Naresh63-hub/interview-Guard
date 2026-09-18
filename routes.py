@@ -57,38 +57,40 @@ def _generate_signed_link(meeting_id: str, ttl_seconds: int = 86400) -> str:
     return f"/meet/{meeting_id}?sig={signature}&expires={expires}"
 
 
-def _prune_inactive_participants(now: float = None) -> None:
+def _prune_inactive_participants(meeting_id: str, now: float = None) -> None:
     now = now or time.time()
+    meeting_participants = state.active_participants.setdefault(meeting_id, {})
     expired_roles = [
         role
-        for role, participant in state.active_participants.items()
+        for role, participant in meeting_participants.items()
         if now - participant.get("lastSeen", 0) > state.SESSION_TIMEOUT_SECONDS
     ]
     for role in expired_roles:
-        state.active_participants.pop(role, None)
+        meeting_participants.pop(role, None)
 
-def _session_status_payload() -> dict:
+def _session_status_payload(meeting_id: str) -> dict:
     now = time.time()
-    _prune_inactive_participants(now)
+    _prune_inactive_participants(meeting_id, now)
 
+    meeting_participants = state.active_participants.setdefault(meeting_id, {})
     both_present = all(
-        role in state.active_participants for role in ("interviewer", "candidate")
+        role in meeting_participants for role in ("interviewer", "candidate")
     )
     if both_present:
-        if state.session_started_at is None:
-            state.session_started_at = now
+        if meeting_id not in state.session_started_at:
+            state.session_started_at[meeting_id] = now
     else:
-        state.session_started_at = None
+        state.session_started_at.pop(meeting_id, None)
 
     return {
         "bothPresent": both_present,
-        "startedAt": state.session_started_at,
+        "startedAt": state.session_started_at.get(meeting_id),
         "participants": {
             role: {
                 "displayName": participant.get("displayName") or role.title(),
                 "lastSeen": participant.get("lastSeen"),
             }
-            for role, participant in state.active_participants.items()
+            for role, participant in meeting_participants.items()
         },
     }
 
@@ -409,11 +411,15 @@ def session_join():
     data = request.get_json(silent=True) or {}
     role = (data.get("role") or "").strip().lower()
     display_name = (data.get("displayName") or "").strip()
+    meeting_id = (data.get("meetingId") or _request_meeting_id() or "").strip().upper()
 
+    if not meeting_id:
+        return jsonify({"error": "meetingId is required"}), 400
     if role not in {"interviewer", "candidate"}:
         return jsonify({"error": "role must be interviewer or candidate"}), 400
 
-    state.active_participants[role] = {
+    meeting_participants = state.active_participants.setdefault(meeting_id, {})
+    meeting_participants[role] = {
         "displayName": display_name or role.title(),
         "lastSeen": time.time(),
     }
@@ -425,7 +431,7 @@ def session_join():
         gaze_detector.reset_temporal_state()
         _reset_liveness_state()
 
-    return jsonify(_session_status_payload())
+    return jsonify(_session_status_payload(meeting_id))
 
 @bp.route("/session/leave", methods=["POST", "OPTIONS"])
 @bp.route("/leave", methods=["POST", "OPTIONS"])
@@ -435,8 +441,11 @@ def session_leave():
 
     data = request.get_json(silent=True) or {}
     role = (data.get("role") or "").strip().lower()
-    if role:
-        state.active_participants.pop(role, None)
+    meeting_id = (data.get("meetingId") or _request_meeting_id() or "").strip().upper()
+
+    if meeting_id and role:
+        meeting_participants = state.active_participants.setdefault(meeting_id, {})
+        meeting_participants.pop(role, None)
 
     if role == "candidate":
         # The candidate left: drop the meeting's analysis lock right away
@@ -445,11 +454,14 @@ def session_leave():
         # verified session meeting) so a leave can't miss the in-use lock.
         gaze_detector.meeting_locks.drop(_request_meeting_id())
 
-    return jsonify(_session_status_payload())
+    return jsonify(_session_status_payload(meeting_id)) if meeting_id else jsonify({"error": "No meeting"}), 400
 
 @bp.route("/session/status", methods=["GET"])
 def session_status():
-    return jsonify(_session_status_payload())
+    meeting_id = _request_meeting_id()
+    if not meeting_id:
+        return jsonify({"error": "No meeting"}), 400
+    return jsonify(_session_status_payload(meeting_id))
 
 @bp.route("/create-room", methods=["POST", "OPTIONS"])
 @limiter.limit("10 per minute")  # Limit room creation to prevent abuse

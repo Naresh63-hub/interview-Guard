@@ -540,12 +540,14 @@ function applySessionStatus(status) {
 }
 
 async function postSessionState(endpoint) {
+    const meetingId = typeof MEETING_ID !== 'undefined' ? MEETING_ID : "";
     const response = await fetch(apiUrl(endpoint), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
             role: userRole,
             displayName: localStorage.getItem("displayName") || "",
+            meetingId: meetingId,
         }),
         keepalive: true,
     });
