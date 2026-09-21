@@ -10,7 +10,7 @@ def register_sockets(socketio):
     def _socket_key(participant):
         """Return the participant's socket id regardless of key casing.
 
-        In-memory participants were appended with ``socketId`` while MongoDB
+        In-memory participants were appended with ``socketId`` while Supabase
         persisted them under ``socket_id``; read both so a room re-fetched
         from the database authorizes the same socket that joined it.
         """

@@ -7,32 +7,31 @@ let remoteSid = null;
 let participantCount = 1;
 const MEETING_ID = window.MEETING_ID;
 
-// API Origin - handle static preview vs production
-const IS_STATIC_PREVIEW = window.location.port === "5500";
-const API_ORIGIN = IS_STATIC_PREVIEW
-    ? "https://127.0.0.1:5000"
-    : window.location.origin;
+// API Origin - handle static preview vs production.
+// NOTE: ui.js owns these top-level `const` bindings (both scripts share one
+// global lexical scope, and ui.js loads after webrtc.js but before any of
+// this file's functions run). Redeclaring them here used to throw
+// "Identifier has already been declared" and abort ALL of ui.js.
+// Uses inside functions below resolve to ui.js's bindings at call time.
 
-// DOM Elements - initialized when DOM is ready
-let videoElement = null;
-let btnMute = null;
-let btnVideo = null;
-let iconMute = null;
-let textMute = null;
-let iconVideo = null;
-let textVideo = null;
-let audioBars = null;
+// DOM element references.
+// NOTE: ui.js owns the top-level `const` bindings for these ids (videoElement,
+// btnMute, btnVideo, iconMute, textMute, iconVideo, textVideo, audioBars) and
+// both scripts share one global lexical scope — redeclaring them here used to
+// throw "Identifier has already been declared", which aborted ALL of ui.js
+// (no session join/heartbeat, no stat updates → dashboard stuck on
+// "Session Pending / Analyzing..."). This file only ASSIGNS them.
+// webrtc.js also has a null-safe `initializeDOMElements()` fallback below.
 
-// Initialize DOM elements when DOM is ready
+// Initialize DOM element references when needed.
+// NOTE: ui.js owns these as top-level `const` bindings and assigns them at
+// script-eval time. Re-assigning a const THROWS (TypeError: Assignment to
+// constant variable), which used to kill the DOMContentLoaded handler below
+// BEFORE the mute/cam click listeners were attached — dead buttons.
+// ui.js's bindings are already correct, so this function is now a no-op
+// kept only for the call sites that guard with it.
 function initializeDOMElements() {
-    videoElement = document.getElementById("main-video");
-    btnMute = document.getElementById("btn-mute");
-    btnVideo = document.getElementById("btn-video");
-    iconMute = document.getElementById("icon-mute");
-    textMute = document.getElementById("text-mute");
-    iconVideo = document.getElementById("icon-video");
-    textVideo = document.getElementById("text-video");
-    audioBars = document.getElementById("audio-bars");
+    return true;
 }
 
 const ADVANCED_ICE_SERVERS = {
@@ -835,11 +834,18 @@ function toggleVideo() {
     }
 }
 
-// Wire buttons - wait for DOM to be ready
+// Wire buttons - wait for DOM to be ready.
+// Guard against double-attachment: ui.js's load handler and this handler can
+// both run, and duplicate listeners would make one click toggle twice.
 document.addEventListener("DOMContentLoaded", () => {
-    initializeDOMElements();
-    if (btnMute) btnMute.addEventListener("click", toggleMute);
-    if (btnVideo) btnVideo.addEventListener("click", toggleVideo);
+    if (btnMute && !btnMute.dataset.wired) {
+        btnMute.dataset.wired = "1";
+        btnMute.addEventListener("click", toggleMute);
+    }
+    if (btnVideo && !btnVideo.dataset.wired) {
+        btnVideo.dataset.wired = "1";
+        btnVideo.addEventListener("click", toggleVideo);
+    }
 });
 
 // ─── Screen Share ──────────────────────────────────────────────────────

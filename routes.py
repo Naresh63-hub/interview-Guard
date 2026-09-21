@@ -328,9 +328,9 @@ def candidate_dashboard(meeting_id):
     meeting_id = meeting_id.upper()
     if session.get('candidate_verified_meeting') != meeting_id:
         return "Unauthorized: Please use the signed link sent by the host", 403
-    # Mongo-aware lookup: after a server restart the in-memory dict is empty,
+    # DB-aware lookup: after a server restart the in-memory dict is empty,
     # so a raw dict check would bounce the candidate back to the join page
-    # even though the room exists in MongoDB.
+    # even though the room exists in Supabase.
     room = state.get_meeting_room(meeting_id)
     if not room:
         return redirect(f"/login/candidate?meeting_id={meeting_id}")
@@ -410,6 +410,10 @@ def session_join():
 
     data = request.get_json(silent=True) or {}
     role = (data.get("role") or "").strip().lower()
+    # Legacy clients (older cached ui.js) still report the host as "host";
+    # canonicalize so the room state machine only ever sees interviewer/candidate.
+    if role == "host":
+        role = "interviewer"
     display_name = (data.get("displayName") or "").strip()
     meeting_id = (data.get("meetingId") or _request_meeting_id() or "").strip().upper()
 
@@ -441,6 +445,10 @@ def session_leave():
 
     data = request.get_json(silent=True) or {}
     role = (data.get("role") or "").strip().lower()
+    # Mirror the join canonicalization so a legacy "host" leave actually
+    # removes the interviewer entry instead of silently missing it.
+    if role == "host":
+        role = "interviewer"
     meeting_id = (data.get("meetingId") or _request_meeting_id() or "").strip().upper()
 
     if meeting_id and role:
@@ -454,7 +462,13 @@ def session_leave():
         # verified session meeting) so a leave can't miss the in-use lock.
         gaze_detector.meeting_locks.drop(_request_meeting_id())
 
-    return jsonify(_session_status_payload(meeting_id)) if meeting_id else jsonify({"error": "No meeting"}), 400
+    if not meeting_id:
+        return jsonify({"error": "No meeting"}), 400
+    # NOTE: the previous one-liner
+    # `return jsonify(...) if meeting_id else jsonify({...}), 400`
+    # bound as `(body, 400)` for BOTH branches, so successful leaves always
+    # answered HTTP 400 with a valid body.
+    return jsonify(_session_status_payload(meeting_id))
 
 @bp.route("/session/status", methods=["GET"])
 def session_status():
@@ -496,7 +510,7 @@ def _create_meeting(data):
     title = (data.get("title") or "Interview Session").strip()
     meeting_id = str(uuid.uuid4())[:8].upper()
     
-    # Create meeting room in MongoDB with persistence
+    # Create meeting room with database persistence
     metadata = {
         "partner_id": data.get("partnerId", ""),
         "created_by": session.get('username', 'web'),
@@ -622,7 +636,7 @@ def _validate_partner_api_key(partner_id, api_key):
 
 @bp.route("/api/audit/<meeting_id>", methods=["GET"])
 def get_audit_logs(meeting_id):
-    """Get audit logs for a meeting from MongoDB."""
+    """Get audit logs for a meeting from the database."""
     if not session.get('host_authenticated'):
         return jsonify({"error": "Unauthorized"}), 401
     
@@ -658,7 +672,7 @@ def get_partner_analytics(partner_id):
 
 @bp.route("/api/session/<meeting_id>/start", methods=["POST"])
 def start_session(meeting_id):
-    """Start a session record in MongoDB."""
+    """Start a session record in the database."""
     if request.method == "OPTIONS":
         return jsonify({}), 200
     
@@ -674,7 +688,7 @@ def start_session(meeting_id):
 
 @bp.route("/api/session/<meeting_id>/end", methods=["POST"])
 def end_session(meeting_id):
-    """End a session record in MongoDB."""
+    """End a session record in the database."""
     if request.method == "OPTIONS":
         return jsonify({}), 200
     
@@ -698,9 +712,9 @@ def room_invite(meeting_id):
         return jsonify({"error": "Host authentication required"}), 401
 
     meeting_id = meeting_id.upper()
-    # Use the Mongo-aware lookup: the in-memory dict is empty after a server
+    # Use the DB-aware lookup: the in-memory dict is empty after a server
     # restart, so checking `state.meeting_rooms` alone would 404 on rooms
-    # that exist in MongoDB.
+    # that exist in Supabase.
     if not state.get_meeting_room(meeting_id):
         return jsonify({"error": "Room not found"}), 404
 

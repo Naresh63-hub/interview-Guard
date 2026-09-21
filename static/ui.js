@@ -61,8 +61,13 @@ const apiUrl = (path) => `${API_ORIGIN}${path}`;
 const pageUrl = (path) => `${window.location.origin}${path}`;
 const LOGIN_PATH = IS_STATIC_PREVIEW ? "/login.html" : "/login";
 
-let rawRole = window.userRole || localStorage.getItem("role");
-if (rawRole === "interviewer") rawRole = "host";
+let rawRole = (window.userRole || localStorage.getItem("role") || "").toString().toLowerCase();
+// The backend session API (/session/join, sockets) speaks "interviewer" and
+// "candidate". "host" is an accepted alias everywhere, but it must NEVER
+// replace the canonical value: /session/join validates the role against
+// {interviewer, candidate} and a 400 here silently wedges the dashboard in
+// the "Session Pending / Analyzing..." state.
+if (rawRole === "host") rawRole = "interviewer";
 const userRole = rawRole;
 if (!userRole) {
     window.location.replace(pageUrl(LOGIN_PATH));
@@ -1662,7 +1667,16 @@ window.addEventListener("load", async () => {
     loadChatHistory();
     checkExtensions();
     await checkBackendAvailability();
-    await startWebcam();
+    // Camera first — but never let it hold the session hostage: an unanswered
+    // getUserMedia permission prompt stays PENDING forever (no resolve, no
+    // reject), which used to block setupSocket()/joinSession() behind it and
+    // wedge the dashboard on "Session Pending" indefinitely. Race a timeout:
+    // if the camera is slow, session setup proceeds and the stream attaches
+    // whenever the user finally grants (or denies) permission.
+    await Promise.race([
+        startWebcam(),
+        new Promise((resolve) => setTimeout(resolve, 8000)),
+    ]);
     setupSocket();
     await joinSession();
 

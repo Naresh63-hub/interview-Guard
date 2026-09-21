@@ -23,7 +23,7 @@ Advanced AI-based interview proctoring platform with real-time monitoring, anti-
 - **Live Eye Analysis**: Picture-in-picture video monitoring with annotations
 
 ### **Enterprise Features**
-- **MongoDB Atlas Integration**: Persistent storage and analytics
+- **Supabase integration**: Persistent storage and analytics
 - **Scalable Architecture**: Multi-server support with shared state
 - **White-Label Solution**: Embeddable proctoring for partner platforms
 - **Analytics Dashboard**: Meeting analytics, risk scoring, and historical data
@@ -32,7 +32,7 @@ Advanced AI-based interview proctoring platform with real-time monitoring, anti-
 
 ### **Prerequisites**
 - Python 3.11+
-- MongoDB Atlas account (for persistent storage)
+- Supabase project (for persistent storage + auth)
 - Chrome browser (for extension)
 
 ### **Setup Steps**
@@ -58,7 +58,7 @@ Advanced AI-based interview proctoring platform with real-time monitoring, anti-
 4. **Configure environment variables**
    ```bash
    cp .env.example .env
-   # Edit .env with your MongoDB Atlas credentials
+   # Edit .env with your Supabase credentials (SUPABASE_URL / SUPABASE_KEY)
    ```
 
 5. **Run the application**
@@ -93,7 +93,7 @@ Advanced AI-based interview proctoring platform with real-time monitoring, anti-
 - **MediaPipe**: 468-point facial landmark tracking
 - **YOLO**: Object detection ensemble (custom + standard models)
 - **PyTorch**: Autoencoder for head pose anomaly detection
-- **MongoDB Atlas**: Data persistence and analytics
+- **Supabase**: Data persistence and analytics
 
 ### **Project Structure**
 ```
@@ -102,7 +102,7 @@ interviewproject/
 ├── routes.py                 # API routes and endpoints
 ├── sockets.py                # Socket.IO event handlers
 ├── state.py                  # Application state management
-├── database.py               # MongoDB Atlas integration
+├── database.py               # Supabase persistence (rooms, participants, audit logs)
 ├── advanced_gaze_detector.py # Gaze and pose detection engine
 ├── audio_analyzer.py         # Audio anomaly detection
 ├── liveness_detector.py      # Anti-spoofing detection
@@ -119,7 +119,7 @@ interviewproject/
 - **Browser Monitoring**: Tab switching, dev tools, clipboard detection
 - **Rate Limiting**: API endpoint protection
 - **CORS Configuration**: Controlled cross-origin access
-- **MongoDB Security**: Atlas enterprise-grade database security
+- **Supabase Security**: Enterprise-grade database security with RLS
 
 ## 📊 Analytics & Reporting
 
@@ -136,7 +136,7 @@ python app.py
 ```
 
 ### **Production**
-- MongoDB Atlas for database
+- Supabase for database
 - Gunicorn with eventlet for WSGI server
 - Nginx as reverse proxy
 - SSL/TLS for secure connections
@@ -145,8 +145,8 @@ python app.py
 
 ### **Environment Variables**
 ```env
-MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/
-MONGODB_DB_NAME=intervue_proctoring
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_KEY=your-anon-key
 SECRET_KEY=your-secret-key
 HOST_PASSWORD=admin123
 SESSION_COOKIE_SECURE=1   # set to 1 only over HTTPS

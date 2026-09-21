@@ -25,11 +25,23 @@ class SupabaseDatabase:
             return False
         try:
             self.supabase = create_client(url, key)
+            # create_client() only builds a client object — it never touches
+            # the network, so treating construction as "connected" used to
+            # report success even with a dead endpoint/credentials and the
+            # app would silently degrade to the in-memory fallback. Probe
+            # with the same read pattern the app actually relies on.
+            self.supabase.table("meeting_rooms").select("meeting_id").limit(1).execute()
             self.connected = True
-            print("[Supabase] Connected to Supabase")
+            print("[Supabase] Connected and verified (meeting_rooms readable)")
             return True
         except Exception as e:
-            print(f"[Supabase] Connection error: {e}")
+            self.connected = False
+            print(f"[Supabase] Connection FAILED: {e}")
+            print(
+                "[Supabase] PERSISTENCE DISABLED: running on the in-memory "
+                "fallback — rooms, participants and audit logs will NOT "
+                "survive a server restart."
+            )
             return False
             
     # ====================

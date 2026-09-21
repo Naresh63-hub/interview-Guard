@@ -1149,7 +1149,10 @@ function startLivenessMonitoring() {
     livenessMonitorTimer = setInterval(maybeIssueLivenessChallenge, 10000);
 }
 
-videoElement.addEventListener('playing', () => {
+// The host dashboard has no #main-video element — this listener only makes
+// sense for the candidate. Optional-chained so a missing element can't throw
+// at script load and abort the rest of proctoring.js.
+videoElement?.addEventListener?.('playing', () => {
     if (!isCandidateProctoringRole()) return;
     startMLProcessing();
     startLivenessMonitoring();

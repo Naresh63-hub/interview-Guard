@@ -184,13 +184,23 @@ class SecurityGuard {
     
     monitorNetwork() {
         // Monitor for unauthorized network requests
+        // NOTE: the wrappers must close over `this` — a plain function
+        // assigned to window.fetch loses the guard as `this` when app code
+        // calls bare `fetch(...)`, which used to throw
+        // "Cannot read properties of undefined (reading 'isSuspiciousURL')"
+        // on EVERY request and silently killed the session heartbeat.
+        const guard = this;
         const originalFetch = window.fetch;
         const originalXHR = window.XMLHttpRequest;
-        
+
         window.fetch = function(...args) {
-            const url = args[0];
-            if (typeof url === 'string' && this.isSuspiciousURL(url)) {
-                console.log('[Security] Suspicious fetch request:', url);
+            try {
+                const url = args[0];
+                if (typeof url === 'string' && guard.isSuspiciousURL(url)) {
+                    console.log('[Security] Suspicious fetch request:', url);
+                }
+            } catch (e) {
+                // Monitoring must never break the request itself.
             }
             return originalFetch.apply(this, args);
         };
@@ -198,14 +208,18 @@ class SecurityGuard {
         window.XMLHttpRequest = function() {
             const xhr = new originalXHR();
             const originalOpen = xhr.open;
-            
+
             xhr.open = function(method, url) {
-                if (window.securityGuard.isSuspiciousURL(url)) {
-                    console.log('[Security] Suspicious XHR request:', url);
+                try {
+                    if (guard.isSuspiciousURL(url)) {
+                        console.log('[Security] Suspicious XHR request:', url);
+                    }
+                } catch (e) {
+                    // Monitoring must never break the request itself.
                 }
                 return originalOpen.apply(this, arguments);
             };
-            
+
             return xhr;
         };
     }
@@ -295,15 +309,24 @@ class SecurityGuard {
         };
         
         // Prevent location changes
-        let originalLocation = window.location.href;
-        Object.defineProperty(window, 'location', {
-            get: function() {
-                return window.location;
-            },
-            set: function(value) {
-                console.log('[Security] Blocked location change attempt');
-            }
-        });
+        // NOTE: `location` is [Unforgeable] per the HTML spec — it has no
+        // configurable accessor on window in modern browsers, so this
+        // defineProperty ALWAYS throws TypeError. That used to abort the
+        // guard's constructor midway, leaving window.securityGuard unset
+        // while the earlier setInterval detectors kept running unstoppably.
+        // Sandbox hardening is best-effort: degrade, never crash.
+        try {
+            Object.defineProperty(window, 'location', {
+                get: function() {
+                    return window.location;
+                },
+                set: function(value) {
+                    console.log('[Security] Blocked location change attempt');
+                }
+            });
+        } catch (e) {
+            console.log('[Security] location lockdown unavailable in this browser:', e.message);
+        }
     }
     
     // ============================================================
@@ -353,6 +376,18 @@ class SecurityGuard {
     }
     
     lockPage(title, message) {
+        // The proctor dashboard must never destroy itself: a false-positive
+        // console heuristic on the HOST side used to brick the interview
+        // screen with "Please contact your interviewer". Locks are for the
+        // candidate experience only; host-side violations are logged and
+        // surfaced as audit alerts instead.
+        if (window.userRole === 'interviewer' || window.userRole === 'host') {
+            console.warn('[Security] Lock suppressed for host role:', title, message);
+            if (typeof UI_UPDATER !== 'undefined' && UI_UPDATER.addAuditAlert) {
+                UI_UPDATER.addAuditAlert('Security Warning', message, 'Local', false);
+            }
+            return;
+        }
         document.body.innerHTML = `
             <div style="
                 display: flex;

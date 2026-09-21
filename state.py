@@ -1,7 +1,7 @@
 import time
 from database import db
 
-# Legacy in-memory state (used as fallback if MongoDB unavailable)
+# In-memory state (fallback when the database is unavailable)
 meetings = []
 active_participants = {}
 meeting_rooms = {}
@@ -26,11 +26,11 @@ except Exception as e:
     print(f"[State] Supabase connection error: {e}")
 
 def get_meeting_room(meeting_id):
-    """Get meeting room from MongoDB or fallback to in-memory."""
+    """Get meeting room from Supabase or fall back to in-memory."""
     if db.connected:
         room = db.get_meeting_room(meeting_id)
         if room:
-            # Convert MongoDB structure to match expected structure
+            # Convert the Supabase row to the expected structure
             room_id = meeting_id.upper()
             existing_room = meeting_rooms.get(room_id, {})
             standardized_room = {
@@ -49,7 +49,7 @@ def get_meeting_room(meeting_id):
     return meeting_rooms.get(meeting_id.upper())
 
 def get_latest_meeting_for_user(user_id):
-    """Get the host's most recently created meeting room (Mongo only)."""
+    """Get the host's most recently created meeting room (Supabase only)."""
     if not db.connected or not user_id:
         return None
     room = db.get_latest_meeting_for_user(user_id)
@@ -68,13 +68,13 @@ def get_latest_meeting_for_user(user_id):
     }
 
 def create_meeting_room(meeting_id, host, title, metadata=None):
-    """Create meeting room in MongoDB and sync to in-memory."""
+    """Create meeting room in Supabase and sync to in-memory."""
     if db.connected:
         success = db.create_meeting_room(meeting_id, host, title, metadata)
         if success:
             room = db.get_meeting_room(meeting_id)
             if room:
-                # Convert MongoDB structure to match expected structure
+                # Convert the Supabase row to the expected structure
                 room_id = meeting_id.upper()
                 meeting_rooms[room_id] = {
                     "id": room_id,
@@ -101,7 +101,7 @@ def create_meeting_room(meeting_id, host, title, metadata=None):
     return meeting_rooms[meeting_id]
 
 def add_participant(meeting_id, user_id, user_name, role, socket_id=None):
-    """Add participant to MongoDB and sync to in-memory."""
+    """Add participant to Supabase and sync to in-memory."""
     if db.connected:
         db.add_participant(meeting_id, user_id, user_name, role, socket_id)
     # Sync to in-memory (dedupe: sockets.py already appends a `socketId`
@@ -123,12 +123,12 @@ def add_participant(meeting_id, user_id, user_name, role, socket_id=None):
             room["participants"].append(participant)
 
 def update_participant_activity(meeting_id, user_id):
-    """Update participant activity in MongoDB."""
+    """Update participant activity in Supabase."""
     if db.connected:
         db.update_participant_activity(meeting_id, user_id)
 
 def remove_participant(meeting_id, user_id):
-    """Remove participant from MongoDB and sync to in-memory."""
+    """Remove participant from Supabase and sync to in-memory."""
     if db.connected:
         db.remove_participant(meeting_id, user_id)
     # Sync to in-memory
@@ -137,18 +137,18 @@ def remove_participant(meeting_id, user_id):
         room["participants"] = [p for p in room["participants"] if p.get("user_id") != user_id]
 
 def add_audit_log(meeting_id, event_type, title, message, confidence=None, is_critical=False, metadata=None):
-    """Add audit log to MongoDB."""
+    """Add audit log to Supabase."""
     if db.connected:
         db.add_audit_log(meeting_id, event_type, title, message, confidence, is_critical, metadata)
 
 def start_session(meeting_id):
-    """Start session in MongoDB."""
+    """Start session in Supabase."""
     if db.connected:
         db.create_meeting_session(meeting_id)
     session_started_at[meeting_id] = time.time()
 
 def end_session(meeting_id):
-    """End session in MongoDB."""
+    """End session in Supabase."""
     if db.connected:
         db.end_session(meeting_id)
     session_started_at.pop(meeting_id, None)

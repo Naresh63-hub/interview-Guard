@@ -697,7 +697,11 @@ body {
 .main-video {
     width: 100%;
     height: 100%;
-    object-fit: cover;
+    /* "contain" instead of "cover": cover crops (zooms into) the camera feed
+       whenever the container's aspect ratio differs from the stream's, cutting
+       off the candidate's head/shoulders. contain always shows the full frame. */
+    object-fit: contain;
+    background: #0f1020;
     display: block;
 }
 

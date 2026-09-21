@@ -300,10 +300,17 @@ class PrivacyController {
     
     enableVideoCompression() {
         // Compress video frames before sending
-        const originalDraw = processingCanvas?.getContext('2d')?.drawImage;
-        if (originalDraw) {
-            // Compression will be applied in the ML processing loop
-            console.log('[Privacy] Video compression enabled');
+        // NOTE: processingCanvas is a top-level const in gaze.js, which loads
+        // AFTER this file. Touching the binding during init (even via typeof)
+        // throws a TDZ ReferenceError that used to abort PrivacyController
+        // init entirely. Compression is optional — degrade, never crash.
+        try {
+            if (processingCanvas && processingCanvas.getContext) {
+                // Compression is applied inside the ML processing loop (gaze.js)
+                console.log('[Privacy] Video compression enabled');
+            }
+        } catch (e) {
+            // gaze.js not evaluated yet (TDZ) — skip silently.
         }
     }
     
