@@ -162,6 +162,12 @@ class MeetingLockRegistry:
 import torch
 import torch.nn as nn
 
+# Limit PyTorch CPU threads to keep memory footprint well under Render 512MB limit
+try:
+    torch.set_num_threads(1)
+except Exception:
+    pass
+
 class HeadPoseAutoencoder(nn.Module):
     def __init__(self, input_dim):
         super().__init__()
@@ -457,10 +463,21 @@ class AdvancedGazeDetector:
             return list(self._sessions.keys())
 
     def _init_yolo(self) -> None:
-        model_candidates = [
-            ("custom-v2", "cheating_detector_v2.pt"),
-            ("custom", "cheating_detector.pt"),
-        ]
+        if os.getenv("DISABLE_YOLO", "0").strip().lower() in ("1", "true", "yes"):
+            self.yolo_model = None
+            self.object_detector_status = "Disabled via DISABLE_YOLO"
+            self.is_custom_yolo = False
+            print("[YOLO] Disabled via DISABLE_YOLO environment variable (low-memory mode)")
+            return
+
+        # On memory-constrained hosts (e.g. Render 512MB), load only the best single model
+        model_candidates = []
+        if os.path.exists("cheating_detector_v2.pt"):
+            model_candidates = [("custom-v2", "cheating_detector_v2.pt")]
+        elif os.path.exists("cheating_detector.pt"):
+            model_candidates = [("custom", "cheating_detector.pt")]
+        elif os.path.exists("yolov8n.pt"):
+            model_candidates = [("base", "yolov8n.pt")]
 
         ensemble = YOLOEnsemble(model_candidates)
         if ensemble.models:

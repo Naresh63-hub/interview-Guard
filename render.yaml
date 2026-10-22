@@ -2,13 +2,11 @@ services:
   - type: web
     name: interview-guard
     env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn --worker-class gthread --threads 50 app:app
+    buildCommand: pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu && pip install --no-cache-dir -r requirements.txt
+    startCommand: gunicorn -b 0.0.0.0:$PORT --worker-class gthread --threads 4 --timeout 120 app:app
     envVars:
       - key: FLASK_DEBUG
         value: "0"
-      - key: PORT
-        value: "10000"
       - key: SESSION_COOKIE_SECURE
         value: "true"
       - key: SECRET_KEY
