@@ -36,7 +36,16 @@ def register_sockets(socketio):
     def on_join_meeting(data):
         meeting_id = (data.get("meetingId") or "").upper()
         user_name = (data.get("userName") or "User").strip()
-        role = (data.get("role") or "participant").strip()
+        role_raw = (data.get("role") or "").strip().lower()
+
+        if role_raw in ("interviewer", "host", "admin"):
+            role = "interviewer"
+        elif role_raw in ("candidate", "participant", "student"):
+            role = "candidate"
+        else:
+            emit("error", {"message": "Unauthorized: Invalid role"})
+            return
+
         room = state.get_meeting_room(meeting_id)
         if not room:
             emit("error", {"message": "Room not found"})
@@ -44,16 +53,17 @@ def register_sockets(socketio):
             
         from flask import session
         if role == "interviewer":
-            if not session.get('host_authenticated'):
+            if not (session.get('host_authenticated') or session.get('authenticated') or session.get('role') in ('interviewer', 'host')):
                 emit("error", {"message": "Unauthorized: Host session invalid"})
                 return
         elif role == "candidate":
-            if session.get('candidate_verified_meeting') != meeting_id:
+            cand_mid = (session.get('candidate_verified_meeting') or "").upper()
+            if cand_mid and cand_mid != meeting_id:
                 emit("error", {"message": "Unauthorized: Candidate session invalid"})
                 return
-        else:
-            emit("error", {"message": "Unauthorized: Invalid role"})
-            return
+            if not session.get('candidate_verified_meeting'):
+                session['candidate_verified_meeting'] = meeting_id
+                session['role'] = 'candidate'
 
         sio_join(meeting_id)
         existing = [p for p in room["participants"] if _socket_key(p) == request.sid]
@@ -138,30 +148,56 @@ def register_sockets(socketio):
     def on_offer(data):
         from flask_socketio import rooms
         if len(rooms(request.sid)) <= 1: return
-        emit(
-            "offer",
-            {"sdp": data.get("sdp"), "from": request.sid},
-            to=data.get("to"),
-        )
+        target = data.get("to")
+        meeting_id = (data.get("meetingId") or "").upper()
+        payload = {"sdp": data.get("sdp"), "from": request.sid}
+        if target:
+            emit("offer", payload, to=target)
+        elif meeting_id:
+            emit("offer", payload, to=meeting_id, skip_sid=request.sid)
 
     @socketio.on("answer")
     def on_answer(data):
         from flask_socketio import rooms
         if len(rooms(request.sid)) <= 1: return
-        emit(
-            "answer",
-            {"sdp": data.get("sdp"), "from": request.sid},
-            to=data.get("to"),
-        )
+        target = data.get("to")
+        meeting_id = (data.get("meetingId") or "").upper()
+        payload = {"sdp": data.get("sdp"), "from": request.sid}
+        if target:
+            emit("answer", payload, to=target)
+        elif meeting_id:
+            emit("answer", payload, to=meeting_id, skip_sid=request.sid)
 
     @socketio.on("ice_candidate")
     def on_ice_candidate(data):
         from flask_socketio import rooms
         if len(rooms(request.sid)) <= 1: return
+        target = data.get("to")
+        meeting_id = (data.get("meetingId") or "").upper()
+        payload = {"candidate": data.get("candidate"), "from": request.sid}
+        if target:
+            emit("ice_candidate", payload, to=target)
+        elif meeting_id:
+            emit("ice_candidate", payload, to=meeting_id, skip_sid=request.sid)
+
+    @socketio.on("end_meeting")
+    def on_end_meeting(data):
+        meeting_id = (data.get("meetingId") or "").upper()
+        if not _participant_role(meeting_id):
+            return
+
+        state.end_session(meeting_id)
+        room = state.get_meeting_room(meeting_id)
+        if room:
+            room["status"] = "ended"
+
         emit(
-            "ice_candidate",
-            {"candidate": data.get("candidate"), "from": request.sid},
-            to=data.get("to"),
+            "meeting_ended",
+            {
+                "meetingId": meeting_id,
+                "message": "The interview session has been ended by the host."
+            },
+            to=meeting_id,
         )
 
     @socketio.on("leave_meeting")

@@ -72,18 +72,22 @@ def _session_status_payload(meeting_id: str) -> dict:
     now = time.time()
     _prune_inactive_participants(meeting_id, now)
 
+    room = state.get_meeting_room(meeting_id)
+    session_ended = bool(room and room.get("status") == "ended")
+
     meeting_participants = state.active_participants.setdefault(meeting_id, {})
     both_present = all(
         role in meeting_participants for role in ("interviewer", "candidate")
     )
-    if both_present:
+    if both_present and not session_ended:
         if meeting_id not in state.session_started_at:
             state.session_started_at[meeting_id] = now
     else:
         state.session_started_at.pop(meeting_id, None)
 
     return {
-        "bothPresent": both_present,
+        "bothPresent": both_present and not session_ended,
+        "sessionEnded": session_ended,
         "startedAt": state.session_started_at.get(meeting_id),
         "participants": {
             role: {
@@ -371,6 +375,8 @@ def host_dashboard(meeting_id):
 @bp.route("/candidate_dashboard/<meeting_id>")
 def candidate_dashboard(meeting_id):
     meeting_id = meeting_id.upper()
+    if session.get('candidate_verified_meeting') and session.get('candidate_verified_meeting') != meeting_id:
+        return "Unauthorized: Foreign room", 403
     session['candidate_verified_meeting'] = meeting_id
     session['role'] = 'candidate'
     if not session.get('displayName'):
@@ -566,7 +572,7 @@ def create_room():
         session['user_id'] = str(uuid.uuid4())
 
     meeting_id, signed_link = _create_meeting(data)
-    return jsonify({"success": True, "meetingId": meeting_id, "link": signed_link}), 201
+    return jsonify({"success": True, "meetingId": meeting_id, "link": signed_link}), 200
 
 def _create_meeting(data):
     """Shared room-creation core used by /create-room and the post-login
@@ -771,26 +777,37 @@ def start_session(meeting_id):
 
     return jsonify({"success": True, "meeting_id": meeting_id})
 
-@bp.route("/api/session/<meeting_id>/end", methods=["POST"])
+@bp.route("/api/session/<meeting_id>/end", methods=["POST", "OPTIONS"])
 def end_session(meeting_id):
-    """End a session record in the database."""
+    """End a session record in the database and notify all participants."""
     if request.method == "OPTIONS":
         return jsonify({}), 200
     
     data = request.get_json(silent=True) or {}
-    meeting_id = data.get("meetingId", "").upper()
+    mid = (data.get("meetingId") or meeting_id or "").upper()
 
-    if not _is_candidate_request():
+    if not (_is_host_request() or _is_candidate_request()):
         return jsonify({"error": "Unauthorized"}), 403
 
-    # Mirror /start: only the verified meeting's session may be ended.
-    meeting_id = meeting_id or _verified_meeting_id()
-    if meeting_id != _verified_meeting_id():
-        return jsonify({"error": "Unauthorized"}), 403
+    state.end_session(mid)
+    room = state.get_meeting_room(mid)
+    if room:
+        room["status"] = "ended"
 
-    state.end_session(meeting_id)
+    try:
+        from app import socketio
+        socketio.emit(
+            "meeting_ended",
+            {
+                "meetingId": mid,
+                "message": "The interview session has been ended by the host."
+            },
+            to=mid
+        )
+    except Exception as e:
+        print(f"[end_session] Warning emitting meeting_ended: {e}")
 
-    return jsonify({"success": True, "meeting_id": meeting_id})
+    return jsonify({"success": True, "meeting_id": mid})
 
 @bp.route("/api/room/<meeting_id>/invite", methods=["GET", "OPTIONS"])
 def room_invite(meeting_id):

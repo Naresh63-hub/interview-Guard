@@ -79,47 +79,52 @@ function createPeerConnection() {
     };
 
     pc.ontrack = (evt) => {
-        console.log("Received remote track:", evt.track.kind, "Role:", userRole);
+        const effectiveRole = (typeof userRole !== "undefined" ? userRole : (window.userRole || "")).toLowerCase();
+        console.log("Received remote track:", evt.track.kind, "Role:", effectiveRole);
+        const remoteStream = (evt.streams && evt.streams[0]) ? evt.streams[0] : new MediaStream([evt.track]);
         
         if (evt.track.kind === 'video') {
             // Host/interviewer: show remote (candidate) video in the main area.
             // Candidate: keep the self-view in main area and show the
             // interviewer in the corner PiP instead.
-            if (userRole === "host" || userRole === "interviewer") {
-                videoElement.srcObject = evt.streams[0];
-                videoElement.muted = false; // Unmute remote
-                videoElement.style.background = ""; // Clear any placeholder background
-                
-                console.log("Setting remote video for host from candidate");
-                
-                // Aggressive autoplay handler for mobile/strict browsers
-                const playPromise = videoElement.play();
-                if (playPromise !== undefined) {
-                    playPromise.catch(error => {
-                        console.warn("Autoplay blocked. Injecting manual play button overlay.", error);
-                        let playBtn = document.getElementById("force-play-btn");
-                        if (!playBtn) {
-                            playBtn = document.createElement("button");
-                            playBtn.id = "force-play-btn";
-                            playBtn.textContent = "Tap to Play Video";
-                            playBtn.style.cssText = "position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:9999;padding:15px 30px;font-size:1.2rem;border-radius:30px;background:var(--gradient-purple);color:white;border:none;cursor:pointer;box-shadow:0 10px 25px rgba(0,0,0,0.5);";
-                            
-                            playBtn.onclick = () => {
-                                videoElement.play();
-                                playBtn.remove();
-                            };
-                            
-                            if (videoElement.parentElement) {
-                                videoElement.parentElement.appendChild(playBtn);
+            if (effectiveRole === "host" || effectiveRole === "interviewer") {
+                const mainVideo = document.getElementById("main-video");
+                if (mainVideo) {
+                    mainVideo.srcObject = remoteStream;
+                    mainVideo.muted = false; // Unmute remote
+                    mainVideo.style.background = ""; // Clear any placeholder background
+                    
+                    console.log("Setting remote video for host from candidate");
+                    
+                    // Aggressive autoplay handler for mobile/strict browsers
+                    const playPromise = mainVideo.play();
+                    if (playPromise !== undefined) {
+                        playPromise.catch(error => {
+                            console.warn("Autoplay blocked. Injecting manual play button overlay.", error);
+                            let playBtn = document.getElementById("force-play-btn");
+                            if (!playBtn) {
+                                playBtn = document.createElement("button");
+                                playBtn.id = "force-play-btn";
+                                playBtn.textContent = "Tap to Play Video";
+                                playBtn.style.cssText = "position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:9999;padding:15px 30px;font-size:1.2rem;border-radius:30px;background:var(--gradient-purple);color:white;border:none;cursor:pointer;box-shadow:0 10px 25px rgba(0,0,0,0.5);";
+                                
+                                playBtn.onclick = () => {
+                                    mainVideo.play();
+                                    playBtn.remove();
+                                };
+                                
+                                if (mainVideo.parentElement) {
+                                    mainVideo.parentElement.appendChild(playBtn);
+                                }
                             }
-                        }
-                    });
+                        });
+                    }
                 }
             } else {
                 const remotePip = document.getElementById("remote-video-pip");
                 const remoteVideo = document.getElementById("remote-video");
                 if (remoteVideo) {
-                    remoteVideo.srcObject = evt.streams[0];
+                    remoteVideo.srcObject = remoteStream;
                     remoteVideo.style.background = "";
                     remoteVideo.play().catch(e => console.warn("Remote video autoplay blocked", e));
                     if (remotePip) remotePip.style.display = "block";
@@ -127,19 +132,22 @@ function createPeerConnection() {
                 console.log("Candidate showing interviewer in corner PiP");
             }
         } else if (evt.track.kind === 'audio') {
-            if (userRole === "host" || userRole === "interviewer") {
-                if (!videoElement.srcObject) {
-                    videoElement.srcObject = evt.streams[0];
+            if (effectiveRole === "host" || effectiveRole === "interviewer") {
+                const mainVideo = document.getElementById("main-video");
+                if (mainVideo) {
+                    if (!mainVideo.srcObject) {
+                        mainVideo.srcObject = remoteStream;
+                    }
+                    mainVideo.muted = false;
+                    mainVideo.play().catch(e => console.log("Audio autoplay prevented", e));
                 }
-                videoElement.muted = false;
-                videoElement.play().catch(e => console.log("Audio autoplay prevented", e));
             } else {
                 // Candidate must hear the interviewer. Main video is muted
                 // (self-view, echo protection) so route remote audio to a
                 // dedicated hidden audio element.
                 const remoteAudio = document.getElementById("remote-audio");
                 if (remoteAudio) {
-                    remoteAudio.srcObject = evt.streams[0];
+                    remoteAudio.srcObject = remoteStream;
                     remoteAudio.play().catch(e => console.warn("Remote audio autoplay prevented", e));
                 }
             }
@@ -208,7 +216,7 @@ function setupSocket() {
         }
     });
 
-    window.socket.on("room_info", (data) => {
+    window.socket.on("room_info", async (data) => {
         const peers = data.participants || [];
         participantCount = peers.length;
         if (participantCount >= 2 && !sessionStartTime) {
@@ -228,6 +236,24 @@ function setupSocket() {
             if (vpnEl) {
                 vpnEl.textContent = data.networkStats.isVpnOrProxy ? "VPN/Proxy Detected" : "Secure (Direct)";
                 vpnEl.className = data.networkStats.isVpnOrProxy ? "danger-text" : "green-text";
+            }
+        }
+
+        // Discover other participant in the room if present
+        const mySid = window.socket ? window.socket.id : null;
+        const otherPeer = peers.find(p => {
+            const sid = p.socketId || p.socket_id;
+            return sid && sid !== mySid;
+        });
+
+        if (otherPeer) {
+            const peerSid = otherPeer.socketId || otherPeer.socket_id;
+            if (peerSid) remoteSid = peerSid;
+            console.log("[Socket] Peer found in room_info:", remoteSid);
+            const curStream = window.localStream || localStream;
+            if (!peerConnection && curStream) {
+                peerConnection = createPeerConnection();
+                await createAndSendOffer();
             }
         }
         console.log("[Socket] Room info received:", data);
@@ -294,6 +320,16 @@ function setupSocket() {
 
         try {
             await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
+            // Ensure any local tracks we have are attached before answering
+            const curStream = window.localStream || localStream;
+            if (curStream) {
+                const senders = peerConnection.getSenders();
+                for (const track of curStream.getTracks()) {
+                    if (!senders.some(s => s.track && s.track.id === track.id)) {
+                        peerConnection.addTrack(track, curStream);
+                    }
+                }
+            }
             const answer = await peerConnection.createAnswer();
             await peerConnection.setLocalDescription(answer);
             window.socket.emit("answer", {
@@ -305,6 +341,11 @@ function setupSocket() {
         } catch (err) {
             console.error("offer handler failed:", err);
         }
+    });
+
+    window.socket.on("meeting_ended", (data) => {
+        console.log("[Socket] Meeting ended received:", data);
+        handleMeetingEnded(data ? data.message : "The interview session has been ended by the host.");
     });
 
     window.socket.on("answer", async (data) => {
@@ -715,10 +756,7 @@ async function startWebcam() {
                         peerConnection.addTrack(track, localStream);
                     }
                 }
-                if (
-                    peerConnection.signalingState === "stable" &&
-                    peerConnection.connectionState !== "connected"
-                ) {
+                if (peerConnection.signalingState === "stable") {
                     createAndSendOffer();
                 }
             } catch (renegErr) {
@@ -918,4 +956,122 @@ const btnScreenShare = document.getElementById("btn-screen-share");
 if (btnScreenShare) {
     btnScreenShare.addEventListener("click", toggleScreenShare);
 }
+
+// ─── Meeting Ended Handler ──────────────────────────────────────────────────
+function handleMeetingEnded(message) {
+    console.log("[Meeting Ended] Cleaning up resources and notifying user:", message);
+    
+    // Stop all media tracks
+    if (window.localStream) {
+        window.localStream.getTracks().forEach((t) => t.stop());
+        window.localStream = null;
+    }
+    if (typeof localStream !== "undefined" && localStream) {
+        localStream.getTracks().forEach((t) => t.stop());
+    }
+
+    // Close peer connection
+    if (peerConnection) {
+        peerConnection.close();
+        peerConnection = null;
+    }
+
+    // Stop proctoring and ML loops
+    if (typeof stopMLProcessing === "function") {
+        stopMLProcessing();
+    }
+    if (typeof sessionHeartbeatId !== "undefined" && sessionHeartbeatId) {
+        clearInterval(sessionHeartbeatId);
+    }
+
+    // Clear video elements
+    const mainVideo = document.getElementById("main-video");
+    const localVideo = document.getElementById("local-video");
+    const remoteVideo = document.getElementById("remote-video");
+    const remotePip = document.getElementById("remote-video-pip");
+    const remoteAudio = document.getElementById("remote-audio");
+    if (mainVideo) { mainVideo.srcObject = null; mainVideo.style.background = "#0f172a"; }
+    if (localVideo) { localVideo.srcObject = null; }
+    if (remoteVideo) { remoteVideo.srcObject = null; }
+    if (remotePip) { remotePip.style.display = "none"; }
+    if (remoteAudio) { remoteAudio.srcObject = null; }
+
+    localStorage.removeItem("role");
+    localStorage.removeItem("displayName");
+
+    // Display modal
+    let modal = document.getElementById("interview-ended-modal");
+    if (!modal) {
+        modal = document.createElement("div");
+        modal.id = "interview-ended-modal";
+        modal.style.cssText = `
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(15, 23, 42, 0.95);
+            backdrop-filter: blur(12px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 999999;
+            font-family: 'Inter', sans-serif;
+            color: #ffffff;
+            padding: 20px;
+        `;
+        modal.innerHTML = `
+            <div style="
+                background: linear-gradient(135deg, #1e1b4b 0%, #312e81 100%);
+                border: 1px solid rgba(255, 255, 255, 0.2);
+                border-radius: 24px;
+                padding: 40px;
+                max-width: 480px;
+                width: 100%;
+                text-align: center;
+                box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+            ">
+                <div style="font-size: 3.5rem; margin-bottom: 16px; color: #a5b4fc;">
+                    <i class="ph-fill ph-check-circle"></i>
+                </div>
+                <h2 style="font-size: 1.8rem; font-weight: 700; margin: 0 0 12px 0;">Interview Concluded</h2>
+                <p id="interview-ended-msg" style="color: #cbd5e1; font-size: 1.05rem; line-height: 1.6; margin-bottom: 28px;">
+                    ${message || "The host has ended this interview session. Thank you for your participation."}
+                </p>
+                <button id="btn-return-home" style="
+                    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+                    color: white;
+                    border: none;
+                    padding: 14px 32px;
+                    font-size: 1rem;
+                    font-weight: 600;
+                    border-radius: 12px;
+                    cursor: pointer;
+                    box-shadow: 0 10px 20px rgba(99, 102, 241, 0.4);
+                ">
+                    Return to Login (<span id="ended-countdown">5</span>s)
+                </button>
+            </div>
+        `;
+        document.body.appendChild(modal);
+
+        let count = 5;
+        const countdownEl = document.getElementById("ended-countdown");
+        const interval = setInterval(() => {
+            count--;
+            if (countdownEl) countdownEl.textContent = count;
+            if (count <= 0) {
+                clearInterval(interval);
+                window.location.replace("/login");
+            }
+        }, 1000);
+
+        document.getElementById("btn-return-home").onclick = () => {
+            clearInterval(interval);
+            window.location.replace("/login");
+        };
+    } else {
+        const msgEl = document.getElementById("interview-ended-msg");
+        if (msgEl) msgEl.textContent = message;
+        modal.style.display = "flex";
+    }
+}
+window.handleMeetingEnded = handleMeetingEnded;
 

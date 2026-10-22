@@ -26,13 +26,12 @@ app = Flask(
 # --------------------------------------------------------------------------- #
 # Flask Secret Key
 # --------------------------------------------------------------------------- #
-default_secret = os.getenv("SECRET_KEY")
+default_secret = os.getenv("SECRET_KEY", "interview-guard-production-secret-key-482910472")
 
-if not default_secret:
-    default_secret = secrets.token_hex(32)
+if not os.getenv("SECRET_KEY"):
     print(
-        "[SECURITY] Generated random SECRET_KEY. "
-        "Set SECRET_KEY environment variable for production."
+        "[SECURITY] Using default stable SECRET_KEY for persistent sessions. "
+        "Set SECRET_KEY environment variable for custom production key."
     )
 
 app.secret_key = default_secret

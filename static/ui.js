@@ -492,6 +492,13 @@ function updateTimer() {
 }
 
 function applySessionStatus(status) {
+    if (status?.sessionEnded) {
+        if (typeof window.handleMeetingEnded === "function") {
+            window.handleMeetingEnded("The interview session has been ended by the host.");
+        }
+        return;
+    }
+
     latestSessionStatus = status || null;
     syncParticipantUI(latestSessionStatus);
 
@@ -710,14 +717,41 @@ if (btnEnd) {
 }
 
 async function endInterview() {
-    // Stop all media tracks
-    if (localStream) {
+    // 1. Notify meeting participants via Socket.IO
+    if (window.socket && window.socket.connected) {
+        try {
+            window.socket.emit("end_meeting", {
+                meetingId: MEETING_ID,
+                role: userRole,
+            });
+        } catch (sockErr) {
+            console.warn("Socket end_meeting emit failed:", sockErr);
+        }
+    }
+
+    // 2. Stop all media tracks
+    if (window.localStream) {
+        window.localStream.getTracks().forEach((t) => t.stop());
+        window.localStream = null;
+    }
+    if (typeof localStream !== "undefined" && localStream) {
         localStream.getTracks().forEach((t) => t.stop());
     }
     stopMLProcessing();
     if (sessionHeartbeatId) {
         clearInterval(sessionHeartbeatId);
         sessionHeartbeatId = null;
+    }
+
+    // 3. Inform server via API
+    try {
+        await fetch(`/api/session/${MEETING_ID}/end`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ meetingId: MEETING_ID }),
+        });
+    } catch (apiErr) {
+        console.warn("api end_session failed:", apiErr.message);
     }
 
     try {

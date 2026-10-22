@@ -29,26 +29,27 @@ except Exception as e:
 
 def get_meeting_room(meeting_id):
     """Get meeting room from Supabase or fall back to in-memory."""
+    room_id = (meeting_id or "").upper()
+    existing_room = meeting_rooms.get(room_id, {})
     if db.connected:
         room = db.get_meeting_room(meeting_id)
         if room:
             # Convert the Supabase row to the expected structure
-            room_id = meeting_id.upper()
-            existing_room = meeting_rooms.get(room_id, {})
+            status = existing_room.get("status") if existing_room.get("status") == "ended" else room.get("status", "waiting")
             standardized_room = {
                 "id": room_id,
                 "title": room.get("title", ""),
                 "host": room.get("host", ""),
                 "createdAt": room.get("created_at", time.time()),
                 "participants": existing_room.get("participants", []),
-                "status": room.get("status", "waiting"),
+                "status": status,
                 "metadata": room.get("metadata", {}),
                 "proctoringSettings": room.get("proctoring_settings", {})
             }
             # Sync to in-memory state for performance
             meeting_rooms[room_id] = standardized_room
             return standardized_room
-    return meeting_rooms.get(meeting_id.upper())
+    return meeting_rooms.get(room_id)
 
 def get_latest_meeting_for_user(user_id):
     """Get the host's most recently created meeting room (Supabase only)."""
@@ -160,7 +161,10 @@ def start_session(meeting_id):
     session_started_at[meeting_id] = time.time()
 
 def end_session(meeting_id):
-    """End session in Supabase."""
+    """End session in Supabase and memory."""
+    room_id = (meeting_id or "").upper()
+    if room_id in meeting_rooms:
+        meeting_rooms[room_id]["status"] = "ended"
     if db.connected:
         db.end_session(meeting_id)
     session_started_at.pop(meeting_id, None)
