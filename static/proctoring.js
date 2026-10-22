@@ -63,6 +63,27 @@ setInterval(() => {
 }, 2000);
 
 // ─── Security Monitors ──────────────────────────────────────────────────
+
+// Extension bridge: content.js lives in the extension's isolated world, so
+// it crosses into the page via window.postMessage. Relay each violation over
+// the socket as an audit_event (the backend only accepts these from the
+// candidate's joined socket) — previously these events were dispatched as DOM
+// CustomEvents nobody listened to, so every extension report was lost.
+window.addEventListener("message", function (event) {
+    if (event.origin !== window.location.origin) return;
+    const data = event.data;
+    if (!data || data.type !== "proctoring_violation" || !data.detail) return;
+    if (!isCandidateProctoringRole()) return;
+    if (typeof socket === "undefined" || !socket || !socket.connected) return;
+    socket.emit("audit_event", {
+        meetingId: MEETING_ID,
+        title: data.detail.title || "Extension Violation",
+        message: data.detail.message || "",
+        confidence: "",
+        isCritical: true,
+    });
+});
+
 // -- Tab visibility / focus tracking --
 let tabSwitchCount = 0;
 const tabSwitchTimes = [];

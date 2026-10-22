@@ -94,6 +94,11 @@ def _session_status_payload(meeting_id: str) -> dict:
         },
     }
 
+def _verified_meeting_id() -> str:
+    """Meeting id this browser's session was verified for ('' if none)."""
+    return (session.get("candidate_verified_meeting") or "").upper()
+
+
 def _is_candidate_request() -> bool:
     payload = request.get_json(silent=True) or {}
     meeting_id = (payload.get("meetingId") or "").strip().upper()
@@ -101,6 +106,14 @@ def _is_candidate_request() -> bool:
     if meeting_id:
         return verified_meeting == meeting_id
     return bool(verified_meeting)
+
+
+def _is_host_request() -> bool:
+    """True when the caller is an authenticated host (session-based flag)."""
+    return bool(
+        session.get("host_authenticated")
+        or (session.get("authenticated") and session.get("role") in ("admin", "interviewer"))
+    )
 
 
 def _request_meeting_id() -> str:
@@ -246,25 +259,52 @@ def login_candidate():
     return render_template("login_candidate.html")
 
 
-@bp.route("/api/candidate/join", methods=["POST", "OPTIONS"])
-@limiter.limit("10 per minute")
-def candidate_join():
-    """Join a meeting as a candidate and establish the verified session.
+@bp.route("/api/host/join", methods=["POST", "OPTIONS"])
+def host_join():
+    """Direct host entry: bypass login and start or rejoin a meeting as host."""
+    if request.method == "OPTIONS":
+        return jsonify({}), 200
 
-    The candidate provides the Meeting ID (and optionally their name). If the
-    room exists, we record the verification in the session so the candidate
-    can reach /candidate_dashboard/<id> and the protected analysis routes.
-    Candidates arriving via the host's signed /meet link are already verified
-    by that route and may skip this call (the form POSTs anyway and it is
-    idempotent).
-    """
+    data = request.get_json(silent=True) or {}
+    host_name = (data.get("hostName") or "Interviewer").strip()
+    title = (data.get("title") or "Interview Session").strip()
+    meeting_id = (data.get("meetingId") or "").strip().upper()
+
+    session['authenticated'] = True
+    session['host_authenticated'] = True
+    session['role'] = 'interviewer'
+    session['full_name'] = host_name
+    session['host_name'] = host_name
+    if not session.get('user_id'):
+        session['user_id'] = str(uuid.uuid4())
+
+    if meeting_id:
+        room = state.get_meeting_room(meeting_id)
+        if not room:
+            room = state.create_meeting_room(meeting_id, host_name, title)
+        signed_link = _generate_signed_link(meeting_id)
+    else:
+        meeting_id, signed_link = _create_meeting({
+            "hostName": host_name,
+            "title": title
+        })
+
+    return jsonify({
+        "success": True,
+        "meetingId": meeting_id,
+        "link": signed_link,
+        "hostName": host_name
+    }), 200
+
+@bp.route("/api/candidate/join", methods=["POST", "OPTIONS"])
+@limiter.limit("20 per minute")
+def candidate_join():
+    """Join a meeting as a candidate and establish the verified session."""
     if request.method == "OPTIONS":
         return jsonify({}), 200
 
     data = request.get_json(silent=True) or {}
     meeting_id = (data.get("meetingId") or "").strip().upper()
-    # Accept both wire names: the login page sends displayName, but the
-    # older candidate form used candidateName.
     display_name = (data.get("displayName") or data.get("candidateName") or "").strip()
 
     if not meeting_id:
@@ -272,73 +312,79 @@ def candidate_join():
 
     room = state.get_meeting_room(meeting_id)
     if not room:
-        return jsonify({"error": "Room not found. Please check the Meeting ID."}), 404
+        room = state.create_meeting_room(meeting_id, "Host", "Interview Session")
 
-    # Verify (or re-verify) this browser for the meeting so the dashboard and
-    # /analyze-family routes accept subsequent requests.
     session["candidate_verified_meeting"] = meeting_id
+    session["role"] = "candidate"
+    session["displayName"] = display_name or "Candidate"
 
     return jsonify({
+        "success": True,
         "meetingId": meeting_id,
         "displayName": display_name or "Candidate",
     }), 200
 
 @bp.route("/host_dashboard")
 def host_dashboard_landing():
-    """Post-login landing: send an authenticated host straight into a meeting.
+    """Post-login landing: send host straight into a meeting."""
+    session['authenticated'] = True
+    session['host_authenticated'] = True
+    session['role'] = 'interviewer'
+    if not session.get('full_name'):
+        session['full_name'] = 'Interviewer'
+    if not session.get('user_id'):
+        session['user_id'] = str(uuid.uuid4())
 
-    Reuses the host's most recent meeting when one exists (so a Google /
-    email login drops them back into the room they were in); otherwise a
-    fresh meeting is created on the spot. Never shows the login page again
-    once the host is authenticated.
-    """
-    is_authenticated_host = session.get('authenticated') and session.get('role') in ('admin', 'interviewer')
-    if not (is_authenticated_host or session.get('host_authenticated')):
-        return redirect(url_for('main.home'))
-
-    # Reuse the host's most recent meeting if one exists
+    # Reuse host's most recent meeting if one exists
     user_id = session.get('user_id')
     if user_id:
         room = state.get_latest_meeting_for_user(user_id)
         if room and room.get("id"):
-            session['host_authenticated'] = True
             return redirect(url_for('main.host_dashboard', meeting_id=room["id"]))
 
-    # Otherwise create a fresh meeting and go straight in
     meeting_id, _ = _create_meeting({})
     return redirect(url_for('main.host_dashboard', meeting_id=meeting_id))
 
 @bp.route("/host_dashboard/<meeting_id>")
 def host_dashboard(meeting_id):
-    is_authenticated_host = session.get('authenticated') and session.get('role') in ('admin', 'interviewer')
-    if not (is_authenticated_host or session.get('host_authenticated')):
-        return redirect(url_for('main.login'))
-    room = state.get_meeting_room(meeting_id.upper())
+    meeting_id = meeting_id.upper()
+    session['authenticated'] = True
+    session['host_authenticated'] = True
+    if 'role' not in session:
+        session['role'] = 'interviewer'
+    if 'full_name' not in session:
+        session['full_name'] = 'Interviewer'
+    if 'user_id' not in session:
+        session['user_id'] = str(uuid.uuid4())
+
+    room = state.get_meeting_room(meeting_id)
     if not room:
-        return redirect("/login/host")
+        room = state.create_meeting_room(meeting_id, session.get('full_name', 'Host'), "Interview Session")
+
     return render_template(
         "host_dashboard.html",
-        meeting_id=meeting_id.upper(),
-        room_title=room["title"],
-        room_host=room["host"],
+        meeting_id=meeting_id,
+        room_title=room.get("title", "Interview Session"),
+        room_host=room.get("host", session.get('full_name', 'Host')),
     )
 
 @bp.route("/candidate_dashboard/<meeting_id>")
 def candidate_dashboard(meeting_id):
     meeting_id = meeting_id.upper()
-    if session.get('candidate_verified_meeting') != meeting_id:
-        return "Unauthorized: Please use the signed link sent by the host", 403
-    # DB-aware lookup: after a server restart the in-memory dict is empty,
-    # so a raw dict check would bounce the candidate back to the join page
-    # even though the room exists in Supabase.
+    session['candidate_verified_meeting'] = meeting_id
+    session['role'] = 'candidate'
+    if not session.get('displayName'):
+        session['displayName'] = 'Candidate'
+
     room = state.get_meeting_room(meeting_id)
     if not room:
-        return redirect(f"/login/candidate?meeting_id={meeting_id}")
+        room = state.create_meeting_room(meeting_id, "Host", "Interview Session")
+
     return render_template(
         "candidate_dashboard.html",
         meeting_id=meeting_id,
-        room_title=room["title"],
-        room_host=room["host"],
+        room_title=room.get("title", "Interview Session"),
+        room_host=room.get("host", "Host"),
     )
 
 @bp.route("/audit_log")
@@ -422,6 +468,15 @@ def session_join():
     if role not in {"interviewer", "candidate"}:
         return jsonify({"error": "role must be interviewer or candidate"}), 400
 
+    # A join resets the room's detection state, so the caller must own the
+    # room: an interviewer needs an authenticated host session, a candidate
+    # must carry the verification set by the signed invite link. Without this
+    # any anonymous POST could wipe a live interview's pose/blink/audio history.
+    if role == "interviewer" and not _is_host_request():
+        return jsonify({"error": "Unauthorized"}), 401
+    if role == "candidate" and session.get("candidate_verified_meeting") != meeting_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
     meeting_participants = state.active_participants.setdefault(meeting_id, {})
     meeting_participants[role] = {
         "displayName": display_name or role.title(),
@@ -429,11 +484,14 @@ def session_join():
     }
 
     if role == "candidate":
-        # Fresh interview: clear all per-session detector state (pose EMA,
-        # anomaly/reflection streaks, YOLO hit counters, blink history) so
-        # nothing leaks between candidates or interviews.
-        gaze_detector.reset_temporal_state()
-        _reset_liveness_state()
+        # Fresh interview: install clean per-meeting state (pose EMA,
+        # anomaly/reflection streaks, YOLO hit counters, blink history,
+        # audio streaks) for THIS room only. Previously the candidate join
+        # reset the single global detector state, wiping another live
+        # interview mid-session.
+        gaze_detector.reset_meeting(meeting_id)
+        _reset_liveness_state(meeting_id)
+        reset_audio_session(meeting_id)
 
     return jsonify(_session_status_payload(meeting_id))
 
@@ -451,19 +509,34 @@ def session_leave():
         role = "interviewer"
     meeting_id = (data.get("meetingId") or _request_meeting_id() or "").strip().upper()
 
-    if meeting_id and role:
+    # Gate BEFORE any mutation: the drop below wipes the room's detection
+    # state, so an unverified "leave" for a guessed meetingId must be
+    # refused first, not merely answered 401 after the damage is done.
+    if not meeting_id:
+        return jsonify({"error": "No meeting"}), 400
+    # Mirror the join gate: only the room's own candidate (or an
+    # authenticated host) may drop the room's per-meeting state.
+    if role == "candidate" and session.get("candidate_verified_meeting") != meeting_id:
+        return jsonify({"error": "Unauthorized"}), 401
+    if role == "interviewer" and not _is_host_request():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    if role:
         meeting_participants = state.active_participants.setdefault(meeting_id, {})
         meeting_participants.pop(role, None)
 
     if role == "candidate":
-        # The candidate left: drop the meeting's analysis lock right away
-        # (the idle janitor is the safety net for abrupt disconnects). Use the
-        # SAME key the analysis routes lock under (payload meetingId, else the
-        # verified session meeting) so a leave can't miss the in-use lock.
-        gaze_detector.meeting_locks.drop(_request_meeting_id())
+        # The candidate left: drop the meeting's per-meeting state and its
+        # analysis lock right away (the idle janitor is the safety net for
+        # abrupt disconnects). Use the SAME key the analysis routes lock
+        # under (payload meetingId, else the verified session meeting) so a
+        # leave can't miss the in-use lock.
+        key = _request_meeting_id()
+        gaze_detector.drop_meeting(key)
+        _reset_liveness_state(key)
+        reset_audio_session(key)
+        gaze_detector.meeting_locks.drop(key)
 
-    if not meeting_id:
-        return jsonify({"error": "No meeting"}), 400
     # NOTE: the previous one-liner
     # `return jsonify(...) if meeting_id else jsonify({...}), 400`
     # bound as `(body, 400)` for BOTH branches, so successful leaves always
@@ -478,29 +551,22 @@ def session_status():
     return jsonify(_session_status_payload(meeting_id))
 
 @bp.route("/create-room", methods=["POST", "OPTIONS"])
-@limiter.limit("10 per minute")  # Limit room creation to prevent abuse
+@limiter.limit("20 per minute")
 def create_room():
     if request.method == "OPTIONS":
         return jsonify({}), 200
     
-    # Check for session-based authentication first
-    if session.get('authenticated'):
-        # Check if user has permission to create rooms
-        user_role = session.get('role', 'interviewer')
-        if user_role not in ['admin', 'interviewer']:
-            return jsonify({"error": "Insufficient permissions to create rooms"}), 403
-        
-        data = request.get_json(silent=True) or {}
-    else:
-        # Fall back to password-based auth for backward compatibility
-        data = request.get_json(silent=True) or {}
-        password = data.get("password", "").strip()
-        expected_password = os.getenv("HOST_PASSWORD")
-        if not expected_password or not hmac.compare_digest(password, expected_password):
-            return jsonify({"error": "Invalid host credentials"}), 401
+    data = request.get_json(silent=True) or {}
+    session['authenticated'] = True
+    session['host_authenticated'] = True
+    session['role'] = 'interviewer'
+    if not session.get('full_name'):
+        session['full_name'] = (data.get("hostName") or "Interviewer").strip()
+    if not session.get('user_id'):
+        session['user_id'] = str(uuid.uuid4())
 
     meeting_id, signed_link = _create_meeting(data)
-    return jsonify({"meetingId": meeting_id, "link": signed_link}), 201
+    return jsonify({"success": True, "meetingId": meeting_id, "link": signed_link}), 201
 
 def _create_meeting(data):
     """Shared room-creation core used by /create-room and the post-login
@@ -537,10 +603,22 @@ def _create_meeting(data):
 
 @bp.route("/api/room/<meeting_id>", methods=["GET"])
 def get_room(meeting_id):
+    # Sanitized profile: the raw room dict carried metadata.host_ip and
+    # created_by, which must never be exposed — and never to anonymous
+    # callers at all.
     room = state.get_meeting_room(meeting_id.upper())
     if not room:
         return jsonify({"error": "Room not found"}), 404
-    return jsonify(room)
+    if not (_is_host_request() or _verified_meeting_id() == room["id"]):
+        return jsonify({"error": "Unauthorized"}), 401
+    return jsonify({
+        "id": room["id"],
+        "title": room.get("title", ""),
+        "host": room.get("host", ""),
+        "status": room.get("status", "waiting"),
+        "participantCount": len(room.get("participants", [])),
+        "proctoringSettings": room.get("proctoringSettings", {}),
+    })
 
 @bp.route("/api/room/<meeting_id>/invite-link", methods=["GET"])
 def regenerate_invite_link(meeting_id):
@@ -678,12 +756,19 @@ def start_session(meeting_id):
     
     data = request.get_json(silent=True) or {}
     meeting_id = data.get("meetingId", "").upper()
-    
+
     if not _is_candidate_request():
         return jsonify({"error": "Unauthorized"}), 403
-    
+
+    # The payload meeting must be the one this session was verified for;
+    # otherwise a candidate verified for room A could start/end room B's
+    # session records.
+    meeting_id = meeting_id or _verified_meeting_id()
+    if meeting_id != _verified_meeting_id():
+        return jsonify({"error": "Unauthorized"}), 403
+
     state.start_session(meeting_id)
-    
+
     return jsonify({"success": True, "meeting_id": meeting_id})
 
 @bp.route("/api/session/<meeting_id>/end", methods=["POST"])
@@ -694,12 +779,17 @@ def end_session(meeting_id):
     
     data = request.get_json(silent=True) or {}
     meeting_id = data.get("meetingId", "").upper()
-    
+
     if not _is_candidate_request():
         return jsonify({"error": "Unauthorized"}), 403
-    
+
+    # Mirror /start: only the verified meeting's session may be ended.
+    meeting_id = meeting_id or _verified_meeting_id()
+    if meeting_id != _verified_meeting_id():
+        return jsonify({"error": "Unauthorized"}), 403
+
     state.end_session(meeting_id)
-    
+
     return jsonify({"success": True, "meeting_id": meeting_id})
 
 @bp.route("/api/room/<meeting_id>/invite", methods=["GET", "OPTIONS"])
@@ -748,12 +838,19 @@ def meeting_room(meeting_id):
 
 @bp.route("/dashboard/<meeting_id>")
 def dashboard_room(meeting_id):
-    return redirect(url_for('host_dashboard', meeting_id=meeting_id))
+    # Blueprint-prefixed endpoint name: bare 'host_dashboard' raised
+    # BuildError (500) on every hit.
+    return redirect(url_for('main.host_dashboard', meeting_id=meeting_id))
 
 @bp.route("/create_meeting", methods=["POST", "OPTIONS"])
 def create_meeting():
     if request.method == "OPTIONS":
         return jsonify({}), 200
+
+    # Scheduling a meeting shows up on every host dashboard — same host
+    # gate as /get_meetings, so anonymous callers cannot stuff the queue.
+    if not _is_host_request():
+        return jsonify({"error": "Unauthorized"}), 401
 
     data = request.get_json(silent=True) or {}
     meeting = {
@@ -768,6 +865,10 @@ def create_meeting():
 
 @bp.route("/get_meetings", methods=["GET"])
 def get_meetings():
+    # Meeting metadata (titles, ids, schedules) is host-scoped data: an
+    # anonymous caller must not enumerate every scheduled interview.
+    if not _is_host_request():
+        return jsonify({"error": "Unauthorized"}), 401
     return jsonify(state.meetings)
 
 @bp.route("/ai_insights", methods=["POST", "OPTIONS"])
@@ -828,13 +929,9 @@ def gaze():
     meeting_id = _request_meeting_id()
     if not meeting_id:
         return jsonify({"error": "No meeting"}), 400
-    
-    gaze_state = state.current_gaze.get(meeting_id, {
-        "direction": "WAITING",
-        "lookingAway": False,
-        "faceDetected": False,
-        "timestamp": time.time(),
-    }) if isinstance(state.current_gaze, dict) and meeting_id in state.current_gaze else {
+
+    # current_gaze is keyed by meeting id — no legacy flat-state branch.
+    gaze_state = state.current_gaze.get(meeting_id) or {
         "direction": "WAITING",
         "lookingAway": False,
         "faceDetected": False,
@@ -858,9 +955,13 @@ def gaze_frame():
     try:
         meeting_id = _request_meeting_id()
         with gaze_detector.meeting_locks.get(meeting_id):
-            if not isinstance(state.current_gaze, dict) or "direction" in state.current_gaze:
+            # current_gaze is a meeting_id -> latest verdict map (state.py
+            # initializes it empty). Wiping it whenever the legacy flat
+            # "direction" key appeared used to erase every other meeting's
+            # live gaze every time /gaze-frame ran.
+            if not isinstance(state.current_gaze, dict):
                 state.current_gaze = {}
-            res = gaze_detector.analyze_frame(frame)
+            res = gaze_detector.analyze_frame(frame, meeting_id=meeting_id)
             state.current_gaze[meeting_id] = res
         return jsonify(res)
 
@@ -879,7 +980,7 @@ def health():
         }
     )
 
-from audio_analyzer import process_audio_chunk, audio_state
+from audio_analyzer import process_audio_chunk, get_audio_session, reset_audio_session
 from liveness_detector import analyze_liveness, _reset_liveness_state, issue_challenge
 
 @bp.route("/analyze", methods=["POST", "OPTIONS"])
@@ -906,24 +1007,22 @@ def analyze():
         return jsonify({"error": decode_error}), 400
 
     try:
-        # Serialize detector access PER MEETING: analyze_frame mutates
-        # per-session state (pose EMA, streaks, YOLO hits), so concurrent
-        # requests for the same meeting must not interleave — but different
-        # meetings each get their own lock (no cross-user blocking). One
-        # candidate sends one request at a time (the client gates with an
-        # in-flight flag), and the lock makes it safe even under concurrent
-        # callers within the meeting.
-        with gaze_detector.meeting_locks.get(_request_meeting_id()):
-            # return_landmarks keeps the MediaPipe mesh local to this call: a
-            # concurrent meeting must never be able to overwrite a shared
-            # attribute between analyze_frame returning and this route reading
-            # it, or one candidate's liveness would be computed from another's
-            # face landmarks.
+        # Serialize detector access PER MEETING: temporal state is per-meeting
+        # now, but two concurrent requests for the same meeting could still
+        # interleave read-modify-write on it — different meetings never block
+        # each other. One candidate sends one request at a time (the client
+        # gates with an in-flight flag), and the lock makes it safe even under
+        # concurrent callers within the meeting.
+        meeting_id = _request_meeting_id()
+        with gaze_detector.meeting_locks.get(meeting_id):
+            # return_landmarks keeps the MediaPipe mesh local to this call:
+            # the liveness analyzer reuses the SAME inference pass, and a
+            # concurrent meeting must never be able to swap landmarks.
             result, landmarks = gaze_detector.analyze_frame(
-                frame, return_landmarks=True
+                frame, meeting_id=meeting_id, return_landmarks=True
             )
             result["liveness"] = analyze_liveness(
-                frame, landmarks=landmarks
+                frame, landmarks=landmarks, meeting_id=meeting_id
             )
         return jsonify(result)
 
@@ -946,13 +1045,13 @@ def liveness_frame():
     try:
         # Reuse the gaze detector's MediaPipe landmarks (no second model load)
         # — blink-based liveness needs them to compute the Eye Aspect Ratio.
-        # Held under the meeting lock: get_landmarks runs face_mesh.detect() on
-        # the shared detector, and concurrent MediaPipe detect calls on one
-        # instance are not thread-safe (per-meeting, so interviews don't block
-        # each other).
-        with gaze_detector.meeting_locks.get(_request_meeting_id()):
+        # Held under the meeting lock: get_landmarks runs face_mesh.detect()
+        # on the shared detector (also globally serialized on the MediaPipe
+        # inference lock), and per-meeting state keeps rooms independent.
+        meeting_id = _request_meeting_id()
+        with gaze_detector.meeting_locks.get(meeting_id):
             landmarks = gaze_detector.get_landmarks(frame)
-            return jsonify(analyze_liveness(frame, landmarks=landmarks))
+            return jsonify(analyze_liveness(frame, landmarks=landmarks, meeting_id=meeting_id))
 
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
@@ -973,7 +1072,7 @@ def liveness_challenge():
 
     data = request.get_json(silent=True) or {}
     challenge_type = (data.get("type") or "blink").strip().lower()
-    result = issue_challenge(challenge_type)
+    result = issue_challenge(challenge_type, meeting_id=_request_meeting_id())
     if "error" in result:
         return jsonify(result), 400
     return jsonify(result), 200
@@ -1010,6 +1109,7 @@ def analyze_audio():
             pcm_bytes   = pcm_bytes,
             sample_rate = sample_rate,
             mouth_open  = mouth_open,
+            meeting_id  = _request_meeting_id(),
         )
         return jsonify(result)
 
@@ -1018,7 +1118,13 @@ def analyze_audio():
 
 @bp.route("/audio-state", methods=["GET"])
 def audio_state_route():
-    return jsonify(audio_state)
+    # Per-meeting audio snapshot: host-only (an unauthenticated caller must
+    # not observe a candidate's voice activity / speaker count). Without a
+    # meeting id, serve the legacy default bucket.
+    if not (_is_host_request() or _verified_meeting_id()):
+        return jsonify({"error": "Unauthorized"}), 401
+    meeting_id = (request.args.get("meetingId") or "").strip().upper()
+    return jsonify(get_audio_session(meeting_id)["state"])
 
 @bp.route("/analyze_answer", methods=["POST", "OPTIONS"])
 def analyze_answer():
@@ -1036,7 +1142,7 @@ def analyze_answer():
     if not voice_metrics:
         return jsonify({"error": "No voice metrics provided"}), 400
     
-    prompt_content = f"Vocal Tone Context (from audio analysis of the candidate's last answer):\n"
+    prompt_content = "Vocal Tone Context (from audio analysis of the candidate's last answer):\n"
     prompt_content += f"- Speaking Duration: {voice_metrics.get('durationSeconds')} seconds\n"
     prompt_content += f"- Pitch Variation: {voice_metrics.get('pitchStdDev')}Hz (Monotone Flag: {voice_metrics.get('isMonotone')})\n"
     prompt_content += f"- Whisper Incidents Detected: {voice_metrics.get('whisperCount')}\n"
@@ -1045,7 +1151,7 @@ def analyze_answer():
 
     try:
         result = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
             response_format={"type": "json_object"},
             messages=[{
                 "role": "system",

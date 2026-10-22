@@ -205,7 +205,10 @@ if __name__ == "__main__":
     # Set FLASK_DEBUG=1 to enable it; allow_unsafe_werkzeug (which silences
     # the "do not run over HTTP in production" warning) follows debug.
     debug_mode = os.getenv("FLASK_DEBUG", "0").strip().lower() in ("1", "true", "yes")
-    host = os.getenv("HOST", "0.0.0.0")
+    # Default to loopback only: 0.0.0.0 exposed the dev server (and its
+    # interactive debugger when FLASK_DEBUG=1) to everyone on the LAN.
+    # Set HOST=0.0.0.0 explicitly when LAN access is actually needed.
+    host = os.getenv("HOST", "127.0.0.1")
     port = int(os.getenv("PORT", "5000"))
 
     if debug_mode:

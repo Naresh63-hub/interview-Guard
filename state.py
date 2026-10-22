@@ -1,4 +1,5 @@
 import time
+from collections import deque
 from database import db
 
 # In-memory state (fallback when the database is unavailable)
@@ -7,14 +8,15 @@ active_participants = {}
 meeting_rooms = {}
 session_started_at = {}
 SESSION_TIMEOUT_SECONDS = 300
-calibration_samples = []
+# Bounded: one sample per calibration target click (plus client retries)
+# would otherwise grow this list for the lifetime of the process.
+calibration_samples = deque(maxlen=200)
 
-current_gaze = {
-    "direction": "WAITING",
-    "lookingAway": False,
-    "faceDetected": False,
-    "timestamp": time.time(),
-}
+# Latest gaze verdict per meeting: {meeting_id: analyze_frame result}. The
+# /gaze and /gaze-frame routes both index this by meeting id; a flat
+# single-meeting dict here used to make /gaze-frame wipe every other
+# meeting's live state on each request.
+current_gaze = {}
 
 # Database instance
 try:
@@ -104,22 +106,25 @@ def add_participant(meeting_id, user_id, user_name, role, socket_id=None):
     """Add participant to Supabase and sync to in-memory."""
     if db.connected:
         db.add_participant(meeting_id, user_id, user_name, role, socket_id)
-    # Sync to in-memory (dedupe: sockets.py already appends a `socketId`
-    # entry, so never create a second row for the same socket).
+    # Sync to in-memory (dedupe by BOTH user_id and socket_id: matching on
+    # socket_id alone made two None-socket participants collide, silently
+    # dropping the second person from the room).
     room = get_meeting_room(meeting_id.upper())
     if room:
         participant = {
             "user_id": user_id,
             "user_name": user_name,
+            "userName": user_name,
             "role": role,
             "socketId": socket_id,
             "joinedAt": time.time()
         }
-        existing = [
-            p for p in room["participants"]
-            if (p.get("socketId") or p.get("socket_id")) == socket_id
-        ]
-        if not existing:
+        already_present = any(
+            (socket_id and (p.get("socketId") or p.get("socket_id")) == socket_id)
+            or p.get("user_id") == user_id
+            for p in room["participants"]
+        )
+        if not already_present:
             room["participants"].append(participant)
 
 def update_participant_activity(meeting_id, user_id):
@@ -131,10 +136,17 @@ def remove_participant(meeting_id, user_id):
     """Remove participant from Supabase and sync to in-memory."""
     if db.connected:
         db.remove_participant(meeting_id, user_id)
-    # Sync to in-memory
+    # Sync to in-memory. Match user_id OR socket id: entries appended
+    # straight from sockets.py carry no user_id, so the old exact user_id
+    # check left those rows in the room forever (stale ghost participants
+    # survived every join/leave cycle).
     room = get_meeting_room(meeting_id.upper())
     if room:
-        room["participants"] = [p for p in room["participants"] if p.get("user_id") != user_id]
+        room["participants"] = [
+            p for p in room["participants"]
+            if p.get("user_id") != user_id
+            and (p.get("socketId") or p.get("socket_id")) != user_id
+        ]
 
 def add_audit_log(meeting_id, event_type, title, message, confidence=None, is_critical=False, metadata=None):
     """Add audit log to Supabase."""

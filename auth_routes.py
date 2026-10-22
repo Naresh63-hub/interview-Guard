@@ -40,6 +40,14 @@ def role_required(*allowed_roles):
         return decorated_function
     return decorator
 
+def _supabase_ready():
+    """(ok, error_response) — db.supabase is None when the connection was
+    never established (bad/missing credentials), so every auth endpoint that
+    touches it must guard instead of raising AttributeError (500)."""
+    if db.connected and getattr(db, "supabase", None) is not None:
+        return True, None
+    return False, (jsonify({"error": "Authentication service unavailable"}), 503)
+
 # ============================================================
 # AUTHENTICATION ENDPOINTS
 # ============================================================
@@ -121,6 +129,9 @@ from flask import render_template
 
 @auth_bp.route("/google")
 def google_login():
+    ok, err = _supabase_ready()
+    if not ok:
+        return err
     try:
         # Generate OAuth URL using Supabase
         res = db.supabase.auth.sign_in_with_oauth({
@@ -137,6 +148,9 @@ def google_login():
 @auth_bp.route("/google/callback")
 def google_callback():
     code = request.args.get('code')
+    ok, err = _supabase_ready()
+    if code and not ok:
+        return err
     if code:
         try:
             # Exchange the authorization code for a session (PKCE flow)
@@ -163,7 +177,10 @@ def oauth_save():
     token = data.get("access_token")
     if not token:
         return jsonify({"error": "Missing access token"}), 400
-    
+
+    ok, err = _supabase_ready()
+    if not ok:
+        return err
     try:
         # Verify the token by getting the user from Supabase
         res = db.supabase.auth.get_user(token)
@@ -192,12 +209,17 @@ def forgot_password():
     data = request.get_json(silent=True) or {}
     email = data.get("email", "").strip()
     if not email: return jsonify({"error": "Email required"}), 400
+    ok, err = _supabase_ready()
+    if not ok:
+        return err
     try:
         db.supabase.auth.reset_password_email(email)
         return jsonify({"success": True, "message": "If the email exists, a password reset link has been sent."}), 200
     except Exception as e:
         print(f"Auth error: {e}")
         return jsonify({"error": "Bad request"}), 400
+
+
 def register_auth_routes(app):
     auth_limiter.init_app(app)
     init_oauth(app)

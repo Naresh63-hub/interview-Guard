@@ -4,8 +4,15 @@ Detects:
   1. Voice Activity (VAD)        — is someone speaking?
   2. Speaker Diarization         — how many distinct voices?
   3. Lip Sync Mismatch           — voice detected but lips not moving
+
+All streak counters and the last-verdict snapshot are scoped PER MEETING, so
+two concurrent interviews never share a sustained-anomaly streak (candidate A
+being suspicious used to contaminate candidate B's verdict under the old
+module-global state). Legacy callers without a meeting id share the
+``_default`` bucket.
 """
 
+import threading
 import time
 import numpy as np
 from collections import deque
@@ -18,38 +25,76 @@ from collections import deque
 _SUSTAINED_CHUNKS = 3            # consecutive chunks required
 _SUSTAINED_MIN_DURATION_S = 1.0  # …and spanning at least this long
 
-_signal_streaks = {"multi_speaker": 0, "lip_mismatch": 0}
-_anomaly_since = {}
+
+def _meeting_key(meeting_id) -> str:
+    """Normalize the meeting key ('' -> shared default bucket)."""
+    return (meeting_id or "").strip().upper() or "_default"
 
 
-def _update_sustained(component: str, active: bool, now: float) -> bool:
+def _fresh_session() -> dict:
+    """A clean per-meeting audio verdict stream."""
+    return {
+        "streaks": {"multi_speaker": 0, "lip_mismatch": 0},
+        "anomaly_since": {},
+        "state": {
+            "isVoiceActive":      False,
+            "speakerCount":       0,
+            "lipSyncMismatch":    False,
+            "voiceScore":         100,
+            "suspiciousAudio":    False,
+            "confidence":         95,
+            "noiseLevel":         "Low",
+            "timestamp":          time.time(),
+        },
+    }
+
+
+# {meeting_key: _fresh_session()}; guarded because Flask threading mode gives
+# each request its own thread.
+_audio_sessions: dict[str, dict] = {}
+_sessions_guard = threading.Lock()
+
+
+def get_audio_session(meeting_id=None) -> dict:
+    """Return (creating on first use) the audio session for a meeting."""
+    key = _meeting_key(meeting_id)
+    with _sessions_guard:
+        session = _audio_sessions.get(key)
+        if session is None:
+            session = _fresh_session()
+            _audio_sessions[key] = session
+        return session
+
+
+def reset_audio_session(meeting_id=None) -> None:
+    """Drop all audio streak/state for one meeting (join/leave)."""
+    key = _meeting_key(meeting_id)
+    with _sessions_guard:
+        _audio_sessions.pop(key, None)
+
+
+def _update_sustained(session: dict, component: str, active: bool, now: float) -> bool:
     """Return True only when `active` has persisted across consecutive chunks.
 
     Any inactive chunk resets the component's streak, so isolated spikes are
-    always ignored.
+    always ignored. Streaks live on the meeting's session, never globally.
     """
+    streaks = session["streaks"]
+    anomaly_since = session["anomaly_since"]
     if active:
-        _signal_streaks[component] += 1
-        if _signal_streaks[component] == 1:
-            _anomaly_since[component] = now
+        streaks[component] += 1
+        if streaks[component] == 1:
+            anomaly_since[component] = now
         return (
-            _signal_streaks[component] >= _SUSTAINED_CHUNKS
-            and (now - _anomaly_since[component]) >= _SUSTAINED_MIN_DURATION_S
+            streaks[component] >= _SUSTAINED_CHUNKS
+            and (now - anomaly_since[component]) >= _SUSTAINED_MIN_DURATION_S
         )
-    _signal_streaks[component] = 0
+    streaks[component] = 0
     return False
 
-# ─── State ───────────────────────────────────────────────────────────────────
-audio_state = {
-    "isVoiceActive":      False,
-    "speakerCount":       0,
-    "lipSyncMismatch":    False,
-    "voiceScore":         100,
-    "suspiciousAudio":    False,
-    "confidence":         95,
-    "noiseLevel":         "Low",
-    "timestamp":          time.time(),
-}
+# Backwards-compatible alias: a read-only view of the default bucket's last
+# verdict (any code/tests importing the old module-global `audio_state`).
+audio_state = get_audio_session(None)["state"]
 
 # ─── Numpy VAD Heuristic ─────────────────────────────────────────────────────
 def analyze_vad(pcm_bytes: bytes, sample_rate: int = 16000) -> bool:
@@ -131,15 +176,16 @@ def check_lip_sync(is_voice_active: bool, mouth_open: bool) -> bool:
 def process_audio_chunk(
     pcm_bytes:   bytes,
     sample_rate: int  = 16000,
-    mouth_open:  bool = True
+    mouth_open:  bool = True,
+    meeting_id   = None,
 ) -> dict:
-    global audio_state
+    session = get_audio_session(meeting_id)
 
     # Convert to numpy for analysis
     try:
         audio_np = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
     except:
-        return audio_state.copy()
+        return session["state"].copy()
 
     # 1. VAD
     is_voice      = analyze_vad(pcm_bytes, sample_rate)
@@ -159,8 +205,8 @@ def process_audio_chunk(
     # spike — a cough, a second voice for a moment, a one-off lip mismatch —
     # is transient and must NOT flag the candidate. Constant voice is normal
     # during an interview and never counts on its own.
-    sustained_multi = _update_sustained("multi_speaker", speaker_count > 1, now)
-    sustained_lip = _update_sustained("lip_mismatch", lip_mismatch, now)
+    sustained_multi = _update_sustained(session, "multi_speaker", speaker_count > 1, now)
+    sustained_lip = _update_sustained(session, "lip_mismatch", lip_mismatch, now)
     suspicious = sustained_multi or sustained_lip
 
     # Voice score: decreases only with SUSTAINED suspicious signals
@@ -182,7 +228,7 @@ def process_audio_chunk(
     suspicious = bool(suspicious)
     speaker_count = int(speaker_count)
 
-    audio_state.update({
+    session["state"].update({
         "isVoiceActive":   is_voice,
         "speakerCount":    speaker_count,
         "lipSyncMismatch": lip_mismatch,
@@ -193,4 +239,4 @@ def process_audio_chunk(
         "timestamp":       now,
     })
 
-    return audio_state.copy()
+    return session["state"].copy()

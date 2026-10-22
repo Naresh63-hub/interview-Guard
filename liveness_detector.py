@@ -11,9 +11,11 @@ Replaces the old brightness/sharpness placeholder with a blink-based model:
   - Brightness and sharpness are kept as auxiliary signals (very dark or
     heavily blurred frames remain suspicious).
 
-The detector is stateless across HTTP requests only by design: it keeps a
-small module-level rolling history of EAR samples + timestamps so the blink
-signature accumulates over successive /liveness-frame calls.
+All rolling state is scoped PER MEETING: each meeting id owns its own EAR
+history, closure events, motion tracker and challenge slot, so two concurrent
+interviews can never feed each other's blink signature or steal each other's
+liveness challenge. Callers pass ``meeting_id``; legacy callers without one
+share the ``_default`` bucket (single-session dev/tests).
 
 Two complementary signals decide liveness:
 
@@ -27,6 +29,7 @@ Two complementary signals decide liveness:
 """
 
 import math
+import threading
 import time
 from collections import deque
 
@@ -73,34 +76,98 @@ _FACE_CROP_SIZE = 48               # resized face-region crop for diffing
 CHALLENGE_REACT_S = 1.5            # response must start after the prompt shows
 CHALLENGE_WINDOW_S = 6.0           # …and arrive before this deadline
 
-challenge_state = {
-    "active": False,
-    "type": None,                  # "blink" | "head"
-    "issued_at": 0.0,
-    "deadline": 0.0,
-    "status": "idle",             # idle | pending | passed | failed
-}
+# MediaPipe face landmark indices for the eyes
+_LEFT_EYE_V = (159, 145)
+_LEFT_EYE_H = (33, 133)
+_RIGHT_EYE_V = (386, 374)
+_RIGHT_EYE_H = (362, 263)
 
 
-def reset_challenge():
-    """Clear challenge state (session reset / tests)."""
-    challenge_state.update(
-        {
-            "active": False,
-            "type": None,
-            "issued_at": 0.0,
-            "deadline": 0.0,
-            "status": "idle",
-        }
-    )
+def _meeting_key(meeting_id) -> str:
+    """Normalize the meeting key ('' -> shared default bucket)."""
+    return (meeting_id or "").strip().upper() or "_default"
 
 
-def issue_challenge(challenge_type: str) -> dict:
-    """Start a liveness challenge. Returns {type, expiresAt} or an error."""
+def _fresh_state() -> dict:
+    """A clean rolling-state bundle for one meeting."""
+    return {
+        "ear_samples": deque(maxlen=40),    # (timestamp, ear)
+        "closure_events": deque(maxlen=40), # timestamps of closed->open transitions
+        "last_ear_bin": None,               # "closed" | "open" | None
+        "face_seen_since": None,            # timestamp when a face was first seen
+        "last_face_at": 0.0,                # timestamp of the last frame with a face
+        "last_blink_at": None,              # timestamp of the most recent blink
+        "face_crop_prev": None,             # last normalized gray face crop
+        "face_static_since": None,          # when the current static period began
+        "challenge_motion_at": 0.0,         # head-move evidence during a challenge
+    }
+
+
+def _fresh_challenge() -> dict:
+    return {
+        "active": False,
+        "type": None,                  # "blink" | "head"
+        "issued_at": 0.0,
+        "deadline": 0.0,
+        "status": "idle",             # idle | pending | passed | failed
+    }
+
+
+# Rolling state + challenge slots, one per meeting id. Guarded by a lock
+# because Flask threading mode creates a new thread per request; the state
+# *contents* are only touched while the caller holds the route's meeting lock.
+_LIVENESS_STATES: dict[str, dict] = {}
+_CHALLENGE_STATES: dict[str, dict] = {}
+_STATES_GUARD = threading.Lock()
+
+
+def get_liveness_state(meeting_id=None) -> dict:
+    """Return (creating on first use) the rolling state for a meeting."""
+    key = _meeting_key(meeting_id)
+    with _STATES_GUARD:
+        st = _LIVENESS_STATES.get(key)
+        if st is None:
+            st = _fresh_state()
+            _LIVENESS_STATES[key] = st
+        return st
+
+
+def get_challenge_state(meeting_id=None) -> dict:
+    """Return (creating on first use) the challenge slot for a meeting."""
+    key = _meeting_key(meeting_id)
+    with _STATES_GUARD:
+        ch = _CHALLENGE_STATES.get(key)
+        if ch is None:
+            ch = _fresh_challenge()
+            _CHALLENGE_STATES[key] = ch
+        return ch
+
+
+def _reset_liveness_state(meeting_id=None) -> None:
+    """Drop ALL accumulated liveness state for one meeting (join/leave).
+
+    Other meetings are untouched — previously this was a single module-global,
+    so a candidate joining wiped (or, worse, contaminated) every live
+    interview's blink history and pending challenge.
+    """
+    key = _meeting_key(meeting_id)
+    with _STATES_GUARD:
+        _LIVENESS_STATES.pop(key, None)
+        _CHALLENGE_STATES.pop(key, None)
+
+
+def reset_challenge(meeting_id=None) -> None:
+    """Clear the challenge slot for a meeting (session reset / tests)."""
+    get_challenge_state(meeting_id).update(_fresh_challenge())
+
+
+def issue_challenge(challenge_type: str, meeting_id=None) -> dict:
+    """Start a liveness challenge for one meeting. {type, expiresAt} or error."""
     if challenge_type not in ("blink", "head"):
         return {"error": "unknown challenge type", "type": challenge_type}
     now = time.time()
-    challenge_state.update(
+    ch = get_challenge_state(meeting_id)
+    ch.update(
         {
             "active": True,
             "type": challenge_type,
@@ -109,40 +176,7 @@ def issue_challenge(challenge_type: str) -> dict:
             "status": "pending",
         }
     )
-    return {"type": challenge_type, "expiresAt": challenge_state["deadline"]}
-
-# ─── Rolling liveness state (across /liveness-frame calls) ────────────────────
-_LIVENESS_STATE = {
-    "ear_samples": deque(maxlen=40),    # (timestamp, ear)
-    "closure_events": deque(maxlen=40), # timestamps of closed->open transitions
-    "last_ear_bin": None,               # "closed" | "open" | None
-    "face_seen_since": None,            # timestamp when a face was first seen
-    "last_face_at": 0.0,                # timestamp of the last frame with a face
-    "last_blink_at": None,              # timestamp of the most recent blink
-    "face_crop_prev": None,             # last normalized gray face crop
-    "face_static_since": None,          # when the current static period began
-    "challenge_motion_at": 0.0,         # head-move evidence during a challenge
-}
-
-# MediaPipe face landmark indices for the eyes
-_LEFT_EYE_V = (159, 145)
-_LEFT_EYE_H = (33, 133)
-_RIGHT_EYE_V = (386, 374)
-_RIGHT_EYE_H = (362, 263)
-
-
-def _reset_liveness_state():
-    """Clear all accumulated liveness state (used by tests / session reset)."""
-    _LIVENESS_STATE["ear_samples"].clear()
-    _LIVENESS_STATE["closure_events"].clear()
-    _LIVENESS_STATE["last_ear_bin"] = None
-    _LIVENESS_STATE["face_seen_since"] = None
-    _LIVENESS_STATE["last_face_at"] = 0.0
-    _LIVENESS_STATE["last_blink_at"] = None
-    _LIVENESS_STATE["face_crop_prev"] = None
-    _LIVENESS_STATE["face_static_since"] = None
-    _LIVENESS_STATE["challenge_motion_at"] = 0.0
-    reset_challenge()
+    return {"type": challenge_type, "expiresAt": ch["deadline"]}
 
 
 def _coord(landmark, key):
@@ -167,9 +201,8 @@ def compute_ear(landmarks):
         return None
 
 
-def _update_blink_state(ear, now):
+def _update_blink_state(st: dict, ear, now: float) -> None:
     """Record a closure event when a closed-eye sample recovers to open."""
-    st = _LIVENESS_STATE
     if ear is None:
         st["last_ear_bin"] = None
         return
@@ -230,13 +263,15 @@ def _face_crop_gray(frame, landmarks):
     return gray.astype(np.float32) / m
 
 
-def analyze_liveness(frame, landmarks=None):
+def analyze_liveness(frame, landmarks=None, meeting_id=None):
     """Return a liveness verdict for a decoded webcam frame.
 
     Args:
         frame: BGR image from the candidate's webcam.
         landmarks: MediaPipe face landmarks (list of {x, y, z} dicts) for the
             frame, or None/[] when no face was detected.
+        meeting_id: scopes all rolling state (blink history, motion clock,
+            challenge slot) to one interview.
     """
     now = time.time()
     if frame is None:
@@ -252,7 +287,7 @@ def analyze_liveness(frame, landmarks=None):
     brightness = float(gray.mean())
     sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
 
-    st = _LIVENESS_STATE
+    st = get_liveness_state(meeting_id)
     has_face = bool(landmarks) and len(landmarks) > 400  # MediaPipe mesh = 478 pts
     ear = None
 
@@ -261,7 +296,7 @@ def analyze_liveness(frame, landmarks=None):
         if st["face_seen_since"] is None:
             st["face_seen_since"] = now
         ear = compute_ear(landmarks)
-        _update_blink_state(ear, now)
+        _update_blink_state(st, ear, now)
         # Frame-difference motion: a photo / replay is pixel-still; a real
         # face is not. Track the age of the current static period.
         try:
@@ -275,10 +310,11 @@ def analyze_liveness(frame, landmarks=None):
                     else:
                         st["face_static_since"] = None
                         # Head-move evidence for an active head challenge
+                        ch = get_challenge_state(meeting_id)
                         if (
-                            challenge_state["active"]
-                            and challenge_state["type"] == "head"
-                            and now >= challenge_state["issued_at"] + CHALLENGE_REACT_S
+                            ch["active"]
+                            and ch["type"] == "head"
+                            and now >= ch["issued_at"] + CHALLENGE_REACT_S
                         ):
                             st["challenge_motion_at"] = now
                 st["face_crop_prev"] = crop
@@ -297,7 +333,7 @@ def analyze_liveness(frame, landmarks=None):
     # ─── Liveness challenge evaluation ───────────────────────────────────────
     # Mirror the current state so a resolved verdict (passed/failed) keeps
     # being reported until the next challenge is issued.
-    ch = challenge_state
+    ch = get_challenge_state(meeting_id)
     challenge_info = {"active": ch["active"], "type": ch["type"], "status": ch["status"]}
     if ch["active"] and ch["status"] == "pending":
         respond_by = ch["issued_at"] + CHALLENGE_REACT_S

@@ -62,12 +62,15 @@ def register_sockets(socketio):
                 {
                     "socketId": request.sid,
                     "userName": user_name,
+                    "user_name": user_name,
                     "role": role,
                     "joinedAt": time.time(),
                 }
             )
             
-            # Add participant to MongoDB for persistence
+            # Persist the participant (Supabase when connected; the call is
+            # skipped when the DB is unavailable so a later DB re-fetch
+            # cannot resurrect rows that were never written).
             user_id = f"{role}_{user_name}_{meeting_id}"
             state.add_participant(meeting_id, user_id, user_name, role, request.sid)
         # Initialize room settings if they do not exist yet
@@ -104,7 +107,10 @@ def register_sockets(socketio):
                 "participants": [
                     {
                         "socketId": _socket_key(p),
-                        "userName": p["userName"],
+                        # Both writers exist (this file uses userName,
+                        # state.py user_name) — read either so a
+                        # state-added participant can't KeyError the emit.
+                        "userName": p.get("userName") or p.get("user_name") or "User",
                         "role": p["role"],
                     }
                     for p in room["participants"]
@@ -161,11 +167,24 @@ def register_sockets(socketio):
     @socketio.on("leave_meeting")
     def on_leave_meeting(data):
         meeting_id = (data.get("meetingId") or "").upper()
+        # Only a verified member of the room may leave it: otherwise any
+        # connected socket could eject another participant's entry.
+        if _participant_role(meeting_id) is None:
+            return
         room = state.get_meeting_room(meeting_id)
         if room:
+            leaving = [
+                p for p in room["participants"] if _socket_key(p) == request.sid
+            ]
             room["participants"] = [
                 p for p in room["participants"] if _socket_key(p) != request.sid
             ]
+            # Mirror the removal in the database so ghost "joined" rows
+            # don't accumulate across reconnects.
+            for p in leaving:
+                pid = p.get("user_id") or p.get("socketId") or p.get("socket_id")
+                if pid:
+                    state.remove_participant(meeting_id, pid)
             emit("user_left", {"socketId": request.sid}, to=meeting_id)
         sio_leave(meeting_id)
 
@@ -273,11 +292,17 @@ def register_sockets(socketio):
     @socketio.on("disconnect")
     def on_sio_disconnect():
         for meeting_id, room in list(state.meeting_rooms.items()):
-            for p in room["participants"]:
-                if _socket_key(p) == request.sid:
-                    room["participants"] = [
-                        x for x in room["participants"] if _socket_key(x) != request.sid
-                    ]
-                    emit("user_left", {"socketId": request.sid}, to=meeting_id)
-                    sio_leave(meeting_id)
-                    break
+            mine = [p for p in room["participants"] if _socket_key(p) == request.sid]
+            if not mine:
+                continue
+            room["participants"] = [
+                x for x in room["participants"] if _socket_key(x) != request.sid
+            ]
+            # Mirror the removal in the database (same as leave_meeting) so an
+            # abrupt disconnect doesn't leave a ghost "joined" participant row.
+            for p in mine:
+                pid = p.get("user_id") or p.get("socketId") or p.get("socket_id")
+                if pid:
+                    state.remove_participant(meeting_id, pid)
+            emit("user_left", {"socketId": request.sid}, to=meeting_id)
+            sio_leave(meeting_id)

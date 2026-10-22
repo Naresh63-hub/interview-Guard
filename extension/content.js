@@ -243,19 +243,17 @@ let focusLostStartTime = null;
 
 window.addEventListener('blur', function () {
     focusLostCount++;
-    if (!focusLostStartTime) {
-        focusLostStartTime = Date.now();
-    }
+    // Stamp on EVERY blur: keeping the first-ever stamp made each later
+    // "duration" grow unboundedly (time since the FIRST blur, not this one).
+    focusLostStartTime = Date.now();
     
-    const duration = focusLostStartTime ? Date.now() - focusLostStartTime : 0;
-    
-    console.warn(`[InterviewOS Guard] Focus lost! Count: ${focusLostCount}, Duration: ${duration}ms`);
+    console.warn(`[InterviewOS Guard] Focus lost! Count: ${focusLostCount}`);
     
     if (kioskModeActive) {
         showWarning("⚠️ SECURITY ALERT: Window focus lost in kiosk mode!");
-        reportEvent("Focus Lost (Kiosk)", `Window focus lost for ${duration}ms during kiosk mode`);
+        reportEvent("Focus Lost (Kiosk)", `Window focus lost during kiosk mode (event #${focusLostCount})`);
     } else {
-        reportEvent("Focus Lost", `User switched tab, window, or opened another application (Duration: ${duration}ms)`);
+        reportEvent("Focus Lost", `User switched tab, window, or opened another application (event #${focusLostCount})`);
     }
 });
 
@@ -312,15 +310,22 @@ function showWarning(message) {
 
 // 7. Connect to SocketIO or window custom events to report telemetry back to server
 function reportEvent(title, message) {
-    // Dispatch a custom event that our web app socket layers can listen to
-    const event = new CustomEvent('proctoring_violation', {
-        detail: {
-            title: title,
-            message: message,
-            timestamp: Date.now()
-        }
-    });
-    window.dispatchEvent(event);
+    // Content scripts run in the extension's ISOLATED world: a CustomEvent
+    // dispatched here is invisible to the page's listeners, so every
+    // violation report was silently dropped. postMessage crosses into the
+    // page world, where proctoring.js relays it over the socket.
+    const detail = {
+        source: 'interviewos-guard',
+        title: title,
+        message: message,
+        timestamp: Date.now()
+    };
+    try {
+        window.postMessage({ type: 'proctoring_violation', detail: detail }, window.location.origin);
+    } catch (e) {
+        // Non-serializable edge case: fall back to the DOM event anyway.
+        window.dispatchEvent(new CustomEvent('proctoring_violation', { detail: detail }));
+    }
 }
 
 // 8. Initialize kiosk mode if the page has the lock-mode flag

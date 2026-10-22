@@ -1,7 +1,7 @@
 import os
 import time
 from typing import Optional, List, Dict, Any
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 
 # We only need the supabase client
@@ -54,15 +54,20 @@ class SupabaseDatabase:
 
     def create_user(self, username: str, email: str, password: str, full_name: str = "", role: str = "interviewer", google_id: str = None) -> Dict[str, Any]:
         try:
+            # An anonymous-key sign_up lets the CLIENT set data.user_metadata,
+            # so a caller could self-promote to admin through the public auth
+            # endpoint. Whatever the caller asked for, public registration is
+            # always a candidate; host roles are assigned server-side only.
+            safe_metadata = {
+                "username": username,
+                "full_name": full_name,
+                "role": "candidate",
+            }
             res = self.supabase.auth.sign_up({
                 "email": email,
                 "password": password,
                 "options": {
-                    "data": {
-                        "username": username,
-                        "full_name": full_name,
-                        "role": role
-                    }
+                    "data": safe_metadata
                 }
             })
             if res.user:
@@ -108,7 +113,7 @@ class SupabaseDatabase:
             payload = {
                 "meeting_id": meeting_id,
                 "title": title,
-                "settings": metadata or {},
+                "settings": {**(metadata or {}), "host_name": host},
                 "status": "waiting"
             }
             if host_id:
@@ -127,8 +132,14 @@ class SupabaseDatabase:
             if res.data:
                 # Format to match expectations
                 room = res.data[0]
-                room["host"] = "Host" # Could join auth.users to get actual host name
                 room["metadata"] = room.get("settings", {})
+                # Prefer the display name persisted at creation; fall back to
+                # the audit username, then a generic placeholder.
+                room["host"] = (
+                    room["metadata"].get("host_name")
+                    or room["metadata"].get("created_by")
+                    or "Host"
+                )
                 return room
             return None
         except Exception as e:
@@ -242,10 +253,97 @@ class SupabaseDatabase:
             return False
 
     def get_meeting_analytics(self, meeting_id: str) -> Dict[str, Any]:
-        return {"total_incidents": 0, "critical_incidents": 0, "duration_minutes": 0}
+        """Real per-meeting analytics: incident counts from the audit trail
+        and session duration from the sessions table. The previous stub
+        always returned zeros while the README advertised risk scoring."""
+        if not self.connected:
+            return {"meeting_id": meeting_id, "total_incidents": 0, "critical_incidents": 0, "duration_minutes": 0}
+        try:
+            logs_res = (
+                self.supabase.table("audit_logs")
+                .select("is_critical, timestamp")
+                .eq("meeting_id", meeting_id)
+                .execute()
+            )
+            logs = logs_res.data or []
+            total = len(logs)
+            critical = sum(1 for l in logs if l.get("is_critical"))
+
+            sessions_res = (
+                self.supabase.table("meeting_sessions")
+                .select("started_at, ended_at")
+                .eq("meeting_id", meeting_id)
+                .execute()
+            )
+            sessions = sessions_res.data or []
+            duration_minutes = 0.0
+            now = utc_now()
+            for s in sessions:
+                start_raw, end_raw = s.get("started_at"), s.get("ended_at")
+                if not start_raw:
+                    continue
+                try:
+                    start = datetime.fromisoformat(str(start_raw).replace("Z", "+00:00"))
+                    end = (
+                        datetime.fromisoformat(str(end_raw).replace("Z", "+00:00"))
+                        if end_raw else now
+                    )
+                    duration_minutes += max(0.0, (end - start).total_seconds() / 60.0)
+                except ValueError:
+                    continue
+            return {
+                "meeting_id": meeting_id,
+                "total_incidents": total,
+                "critical_incidents": critical,
+                "duration_minutes": round(duration_minutes, 1),
+            }
+        except Exception as e:
+            print(f"[DB Error] get_meeting_analytics: {e}")
+            return {"meeting_id": meeting_id, "total_incidents": 0, "critical_incidents": 0, "duration_minutes": 0}
 
     def get_partner_analytics(self, partner_id: str, days: int = 30) -> Dict[str, Any]:
-        return {"total_meetings": 0, "total_candidates": 0, "incidents": 0}
+        """Aggregate per-partner usage over the last `days` days."""
+        empty = {"partner_id": partner_id, "total_meetings": 0, "total_candidates": 0, "incidents": 0}
+        if not self.connected:
+            return empty
+        try:
+            cutoff = utc_now() - timedelta(days=days)
+            rooms_res = (
+                self.supabase.table("meeting_rooms")
+                .select("meeting_id, settings")
+                .gte("created_at", cutoff.isoformat())
+                .execute()
+            )
+            rooms = [
+                r for r in (rooms_res.data or [])
+                if (r.get("settings") or {}).get("partner_id") == partner_id
+            ]
+            meeting_ids = [r.get("meeting_id") for r in rooms if r.get("meeting_id")]
+            if not meeting_ids:
+                return empty
+
+            cand_res = (
+                self.supabase.table("participants")
+                .select("user_id")
+                .in_("meeting_id", meeting_ids)
+                .eq("role", "candidate")
+                .execute()
+            )
+            inc_res = (
+                self.supabase.table("audit_logs")
+                .select("id")
+                .in_("meeting_id", meeting_ids)
+                .execute()
+            )
+            return {
+                "partner_id": partner_id,
+                "total_meetings": len(meeting_ids),
+                "total_candidates": len({c.get("user_id") for c in (cand_res.data or [])}),
+                "incidents": len(inc_res.data or []),
+            }
+        except Exception as e:
+            print(f"[DB Error] get_partner_analytics: {e}")
+            return empty
 
 # Global instance
 db = SupabaseDatabase()
