@@ -11,10 +11,8 @@ services:
         value: "10000"
       - key: SESSION_COOKIE_SECURE
         value: "true"
-      # The user will need to supply these via the Render dashboard:
-      # - SUPABASE_URL
-      # - SUPABASE_KEY
-      # - SECRET_KEY
-      # - GOOGLE_CLIENT_ID (optional)
-      # - GOOGLE_CLIENT_SECRET (optional)
-      # - CORS_ORIGINS (e.g. https://your-frontend.com)
+      - key: SECRET_KEY
+        generateValue: true
+      - key: PYTHON_VERSION
+        value: "3.12.3"
+      # Optional: add SUPABASE_URL and SUPABASE_KEY in Render Dashboard if cloud database is used
