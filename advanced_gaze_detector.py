@@ -17,9 +17,13 @@ except ImportError:
     mp_available = False
 
 try:
-    from ultralytics import YOLO
-    yolo_available = True
-except ImportError:
+    # Disable heavy YOLO imports on Render or when DISABLE_YOLO is set to prevent 512MB OOM
+    if os.getenv("RENDER", "").lower() in ("true", "1") or os.getenv("DISABLE_YOLO", "0").lower() in ("true", "1"):
+        yolo_available = False
+    else:
+        from ultralytics import YOLO
+        yolo_available = True
+except Exception:
     yolo_available = False
 
 class YOLOEnsemble:
@@ -159,34 +163,50 @@ class MeetingLockRegistry:
                 pass
 
 
-import torch
-import torch.nn as nn
-
-# Limit PyTorch CPU threads to keep memory footprint well under Render 512MB limit
 try:
-    torch.set_num_threads(1)
+    # Disable torch on Render or when DISABLE_TORCH is set to keep memory <100MB
+    if os.getenv("RENDER", "").lower() in ("true", "1") or os.getenv("DISABLE_TORCH", "0").lower() in ("true", "1"):
+        torch_available = False
+        torch = None
+        nn = None
+    else:
+        import torch
+        import torch.nn as nn
+        torch_available = True
+        try:
+            torch.set_num_threads(1)
+        except Exception:
+            pass
 except Exception:
-    pass
+    torch_available = False
+    torch = None
+    nn = None
 
-class HeadPoseAutoencoder(nn.Module):
-    def __init__(self, input_dim):
-        super().__init__()
-        hidden = max(8, input_dim // 2)
-        bottleneck = max(4, input_dim // 8)
-        self.encoder = nn.Sequential(
-            nn.Linear(input_dim, hidden),
-            nn.ReLU(),
-            nn.Linear(hidden, bottleneck),
-            nn.ReLU(),
-        )
-        self.decoder = nn.Sequential(
-            nn.Linear(bottleneck, hidden),
-            nn.ReLU(),
-            nn.Linear(hidden, input_dim),
-        )
+if torch_available and nn is not None:
+    class HeadPoseAutoencoder(nn.Module):
+        def __init__(self, input_dim):
+            super().__init__()
+            hidden = max(8, input_dim // 2)
+            bottleneck = max(4, input_dim // 8)
+            self.encoder = nn.Sequential(
+                nn.Linear(input_dim, hidden),
+                nn.ReLU(),
+                nn.Linear(hidden, bottleneck),
+                nn.ReLU(),
+            )
+            self.decoder = nn.Sequential(
+                nn.Linear(bottleneck, hidden),
+                nn.ReLU(),
+                nn.Linear(hidden, input_dim),
+                nn.ReLU(),
+            )
 
-    def forward(self, x):
-        return self.decoder(self.encoder(x))
+        def forward(self, x):
+            return self.decoder(self.encoder(x))
+else:
+    class HeadPoseAutoencoder:
+        pass
+
 
 class SessionState:
     """Per-meeting temporal detection state.
@@ -602,6 +622,10 @@ class AdvancedGazeDetector:
             session.last_yolo_conf = 0.0
 
     def _init_pose_autoencoder(self) -> None:
+        if not torch_available or torch is None:
+            self.pose_autoencoder = None
+            print("[INFO] Head pose autoencoder skipped (running lightweight mode for cloud/Render)")
+            return
         autoencoder_path = os.path.join("trained_models", "head_pose_autoencoder.pt")
         if os.path.exists(autoencoder_path):
             try:

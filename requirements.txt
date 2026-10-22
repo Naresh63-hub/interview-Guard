@@ -19,7 +19,7 @@ gunicorn==26.0.0                # Production WSGI server
 opencv-python-headless==4.13.0.92   # Computer vision (headless, no GUI)
 mediapipe==0.10.35                  # Face landmark detection and pose estimation
 numpy==2.4.6                        # Numerical computing
-ultralytics==8.4.66                 # YOLO object detection
+# ultralytics==8.4.66                 # Optional: disabled on 512MB RAM cloud free tier to prevent OOM
 openai==2.41.1                      # OpenAI API integration (optional)
 
 # ----------------------------
