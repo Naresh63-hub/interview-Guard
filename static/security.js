@@ -355,9 +355,20 @@ class SecurityGuard {
         
         console.log('[Security Violation]', violation);
         
-        // Emit to host if socket is available
-        if (typeof socket !== 'undefined' && socket && socket.connected) {
-            socket.emit('security_violation', violation);
+        // Surface the violation to the host and the audit trail. The previous
+        // code emitted a dedicated `security_violation` socket event that had
+        // NO server handler, so every debugger / console / VPN / VM / integrity
+        // hit was silently dropped. Route through addAuditAlert instead: on the
+        // candidate it relays a real `audit_event` (which the backend persists
+        // and forwards to the host); on the host it simply logs locally.
+        if (typeof UI_UPDATER !== 'undefined' && UI_UPDATER.addAuditAlert) {
+            UI_UPDATER.addAuditAlert(
+                'Security Violation',
+                message,
+                this.getSeverity(type),
+                violation.severity === 'critical',
+                false
+            );
         }
         
         // Check if should lock page

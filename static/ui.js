@@ -68,8 +68,17 @@ let rawRole = (window.userRole || localStorage.getItem("role") || "").toString()
 // {interviewer, candidate} and a 400 here silently wedges the dashboard in
 // the "Session Pending / Analyzing..." state.
 if (rawRole === "host") rawRole = "interviewer";
+if (!rawRole) {
+    if (window.location.pathname.includes("candidate_dashboard")) {
+        rawRole = "candidate";
+    } else if (window.location.pathname.includes("host_dashboard")) {
+        rawRole = "interviewer";
+    }
+}
 const userRole = rawRole;
-if (!userRole) {
+if (userRole) {
+    localStorage.setItem("role", userRole);
+} else {
     window.location.replace(pageUrl(LOGIN_PATH));
 }
 

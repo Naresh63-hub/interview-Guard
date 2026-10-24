@@ -66,6 +66,17 @@ def test_join_unknown_room_errors(flask_app):
     assert any(m["name"] == "error" for m in received), received
 
 
+def test_end_meeting_from_non_member_is_ignored(flask_app, sio_room):
+    """An anonymous socket that never joined (and has no host/candidate
+    session) must not be able to end another room's meeting."""
+    import app as app_module
+
+    client = app_module.socketio.test_client(flask_app)
+    client.emit("end_meeting", {"meetingId": sio_room, "role": "candidate"})
+    received = client.get_received()
+    assert not any(m["name"] == "meeting_ended" for m in received), received
+
+
 def test_host_ends_meeting_broadcasts_to_candidate(flask_app, sio_room):
     import app as app_module
     import state
@@ -96,3 +107,50 @@ def test_host_ends_meeting_broadcasts_to_candidate(flask_app, sio_room):
     
     room = state.get_meeting_room(sio_room)
     assert room.get("status") == "ended"
+
+
+def test_candidate_audit_event_relays_to_host_and_persists(flask_app, sio_room, monkeypatch):
+    """A candidate alert must reach the host live AND be written to the audit
+    trail (the regression: audit_event was relayed but never persisted, so the
+    host's "View Full Audit Log" stayed empty apart from room_created)."""
+    import app as app_module
+    import state
+
+    persisted = []
+    monkeypatch.setattr(
+        state,
+        "add_audit_log",
+        lambda mid, etype, title, message, confidence=None, is_critical=False, metadata=None: persisted.append(
+            (mid, etype, title, is_critical)
+        ),
+    )
+
+    with flask_app.test_client() as http_host:
+        with http_host.session_transaction() as sess:
+            sess["host_authenticated"] = True
+            sess["role"] = "interviewer"
+        host_sio = app_module.socketio.test_client(flask_app, flask_test_client=http_host)
+        host_sio.emit("join_meeting", {"meetingId": sio_room, "userName": "Host", "role": "interviewer"})
+        host_sio.get_received()
+
+    with flask_app.test_client() as http_cand:
+        with http_cand.session_transaction() as sess:
+            sess["candidate_verified_meeting"] = sio_room
+            sess["role"] = "candidate"
+        cand_sio = app_module.socketio.test_client(flask_app, flask_test_client=http_cand)
+        cand_sio.emit("join_meeting", {"meetingId": sio_room, "userName": "Candidate", "role": "candidate"})
+        cand_sio.get_received()
+        host_sio.get_received()
+
+        cand_sio.emit(
+            "audit_event",
+            {"meetingId": sio_room, "title": "Tab switch", "message": "Left the tab", "isCritical": True},
+        )
+
+    assert (sio_room, "proctoring", "Tab switch", True) in persisted, persisted
+
+    host_received = host_sio.get_received()
+    assert any(
+        m["name"] == "audit_event" and m["args"][0].get("title") == "Tab switch"
+        for m in host_received
+    ), host_received

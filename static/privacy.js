@@ -48,6 +48,12 @@ class PrivacyController {
     
     showConsentDialog() {
         if (this.privacySettings.consentGiven) return;
+
+        // This full-screen (z-index:10000) consent modal is meant for the
+        // candidate experience. privacy.js is loaded on the host dashboard as
+        // well, and showing it there covered the interviewer's entire UI with
+        // an unavoidable dialog. Only the candidate may be prompted for consent.
+        if (window.userRole && window.userRole !== "candidate") return;
         
         const consentDialog = document.createElement('div');
         consentDialog.id = 'privacy-consent-dialog';

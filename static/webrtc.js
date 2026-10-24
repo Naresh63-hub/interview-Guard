@@ -271,10 +271,16 @@ function setupSocket() {
         // Enable kiosk mode for candidates when session starts
         if (data.bothPresent && userRole === "candidate") {
             console.log("[Candidate] Enabling kiosk mode for secure proctoring");
-            // Dispatch event to extension
-            const kioskEvent = new CustomEvent('proctoring_kiosk_enable');
-            window.dispatchEvent(kioskEvent);
-            
+            // The extension's content.js runs in the isolated world and CANNOT
+            // see page-dispatched CustomEvents, so relay via postMessage (the
+            // same cross-world bridge proctoring.js uses for violations). The
+            // old CustomEvent-only dispatch silently never reached the guard.
+            try {
+                window.postMessage({ type: "proctoring_kiosk_enable" }, window.location.origin);
+            } catch (e) {
+                window.dispatchEvent(new CustomEvent("proctoring_kiosk_enable"));
+            }
+
             if (typeof UI_UPDATER !== 'undefined') {
                 UI_UPDATER.addAuditAlert("Kiosk Mode Enabled", "Full-screen lock activated for secure proctoring");
             }
@@ -305,10 +311,26 @@ function setupSocket() {
             peerConnection = createPeerConnection();
         }
         
-        // Perfect-negotiation guard: if an offer arrives while we are
-        // mid-negotiation (glare), roll back to stable so we can accept it
-        // instead of throwing InvalidStateError and killing the connection.
+        // Perfect negotiation. Glare happens because the joining peer offers
+        // (on room_info) at the same moment the already-present peer offers
+        // (on user_joined). One side must yield. We make the CANDIDATE the
+        // polite peer and the HOST/INTERVIEWER the impolite one, so exactly
+        // one offer survives the collision instead of both rolling back and
+        // answering an offer the other had already discarded (which is why
+        // neither side ever saw the other's video).
+        const myRole = (typeof userRole !== "undefined" ? userRole : (window.userRole || "")).toLowerCase();
+        const polite = !(myRole === "host" || myRole === "interviewer");
         const offerCollision = makingOffer || peerConnection.signalingState !== "stable";
+
+        // Impolite peer drops the colliding offer; the ICE handler uses this
+        // flag to also ignore the accompanying candidates.
+        ignoreOffer = !polite && offerCollision;
+        if (ignoreOffer) {
+            return;
+        }
+
+        // Polite peer rolls its own pending offer back to stable so it can
+        // accept (and answer) the incoming one.
         if (offerCollision) {
             try {
                 await peerConnection.setLocalDescription({ type: "rollback" });
@@ -1046,7 +1068,7 @@ function handleMeetingEnded(message) {
                     cursor: pointer;
                     box-shadow: 0 10px 20px rgba(99, 102, 241, 0.4);
                 ">
-                    Return to Login (<span id="ended-countdown">5</span>s)
+                    Return to Home (<span id="ended-countdown">5</span>s)
                 </button>
             </div>
         `;
@@ -1059,13 +1081,13 @@ function handleMeetingEnded(message) {
             if (countdownEl) countdownEl.textContent = count;
             if (count <= 0) {
                 clearInterval(interval);
-                window.location.replace("/login");
+                window.location.replace("/");
             }
         }, 1000);
 
         document.getElementById("btn-return-home").onclick = () => {
             clearInterval(interval);
-            window.location.replace("/login");
+            window.location.replace("/");
         };
     } else {
         const msgEl = document.getElementById("interview-ended-msg");

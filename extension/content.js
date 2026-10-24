@@ -157,6 +157,19 @@ function handleFullscreenChange() {
 window.addEventListener('proctoring_kiosk_enable', enterKioskMode);
 window.addEventListener('proctoring_kiosk_disable', exitKioskMode);
 
+// The page lives in the MAIN world and its CustomEvents never reach this
+// isolated world, so the app relays kiosk commands via window.postMessage.
+// Mirror the violation-report bridge (reportEvent below) in the other
+// direction; otherwise app-triggered kiosk mode was silently dead.
+window.addEventListener('message', function (event) {
+    if (event.source !== window) return;
+    if (event.origin !== window.location.origin) return;
+    const data = event.data;
+    if (!data || typeof data !== 'object') return;
+    if (data.type === 'proctoring_kiosk_enable') enterKioskMode();
+    else if (data.type === 'proctoring_kiosk_disable') exitKioskMode();
+});
+
 // 2. Disable Right-Click Context Menu
 document.addEventListener('contextmenu', function (e) {
     e.preventDefault();

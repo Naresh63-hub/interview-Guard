@@ -183,8 +183,19 @@ def register_sockets(socketio):
     @socketio.on("end_meeting")
     def on_end_meeting(data):
         meeting_id = (data.get("meetingId") or "").upper()
-        if not _participant_role(meeting_id):
-            return
+        from flask import session
+        # A member of the room may always end it. But the in-memory
+        # participant list can be empty for a legitimately-authenticated host
+        # when the room was just re-fetched from a DB that stores participants
+        # in a different shape — that must NOT silently swallow the broadcast
+        # and leave the candidate's page running. Fall back to the verified
+        # host/candidate session so the end signal always propagates.
+        if _participant_role(meeting_id) is None:
+            is_host = session.get("host_authenticated") or session.get("authenticated")
+            cand_mid = (session.get("candidate_verified_meeting") or "").upper()
+            is_candidate_of_room = cand_mid == meeting_id and bool(cand_mid)
+            if not (is_host or is_candidate_of_room):
+                return
 
         state.end_session(meeting_id)
         room = state.get_meeting_room(meeting_id)
@@ -243,13 +254,29 @@ def register_sockets(socketio):
         meeting_id = (data.get("meetingId") or "").upper()
         if not _is_candidate_socket(meeting_id):
             return
+        title = data.get("title", "Event")
+        message = data.get("message", "")
+        confidence = data.get("confidence", "")
+        is_critical = data.get("isCritical", False)
+        # Persist proctoring alerts server-side so the host's "View Full Audit
+        # Log" (/api/audit/<id>) and post-session review have real data to read.
+        # Previously these were only relayed live and never stored, so the audit
+        # trail stayed empty apart from the room_created row.
+        state.add_audit_log(
+            meeting_id,
+            data.get("eventType") or "proctoring",
+            title,
+            message,
+            confidence=confidence,
+            is_critical=is_critical,
+        )
         emit(
             "audit_event",
             {
-                "title": data.get("title", "Event"),
-                "message": data.get("message", ""),
-                "confidence": data.get("confidence", ""),
-                "isCritical": data.get("isCritical", False),
+                "title": title,
+                "message": message,
+                "confidence": confidence,
+                "isCritical": is_critical,
                 "timestamp": time.time(),
             },
             to=meeting_id,

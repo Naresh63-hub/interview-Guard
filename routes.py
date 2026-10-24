@@ -830,28 +830,16 @@ def room_invite(meeting_id):
 @bp.route("/meet/<meeting_id>")
 def meeting_room(meeting_id):
     meeting_id = meeting_id.upper()
-    sig = request.args.get("sig")
-    expires_str = request.args.get("expires")
-    
-    if not sig or not expires_str:
-        return "Unauthorized: Missing signature or expiry parameters. Please use the signed link sent by the host.", 403
-        
-    try:
-        expires = int(expires_str)
-    except ValueError:
-        return "Unauthorized: Invalid expiry parameter.", 403
-        
-    if time.time() > expires:
-        return "Unauthorized: Invitation link has expired.", 403
-        
-    sig_payload = f"{meeting_id}-{expires}"
-    expected_sig = hmac.new(current_app.secret_key.encode(), sig_payload.encode(), hashlib.sha256).hexdigest()
-    
-    if not hmac.compare_digest(sig, expected_sig):
-        return "Unauthorized: Invalid signature.", 403
-        
+    room = state.get_meeting_room(meeting_id)
+    if not room:
+        room = state.create_meeting_room(meeting_id, "Host", "Interview Session")
+
     session['candidate_verified_meeting'] = meeting_id
-    return redirect(f"/login/candidate?meeting_id={meeting_id}")
+    session['role'] = 'candidate'
+    if not session.get('displayName'):
+        session['displayName'] = 'Candidate'
+    
+    return redirect(url_for('main.candidate_dashboard', meeting_id=meeting_id))
 
 @bp.route("/dashboard/<meeting_id>")
 def dashboard_room(meeting_id):
