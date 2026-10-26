@@ -120,6 +120,28 @@ def _is_host_request() -> bool:
     )
 
 
+def _auth_bypass_allowed() -> bool:
+    """Return True only when an explicit server-side environment flag permits
+    the development login-bypass flow (granting host session without Supabase
+    credentials). FAILS CLOSED: unset or any value other than 1/true/yes
+    disables the bypass, ensuring production deployments always require
+    authentication.  The flag is NEVER read from a request parameter."""
+    return os.getenv("AUTH_BYPASS", "0").strip().lower() in ("1", "true", "yes")
+
+
+def _require_host_or_bypass():
+    """Guard for host-only endpoints.  Returns None (proceed) when the caller
+    already has an authenticated host session or the dev bypass is explicitly
+    allowed.  Returns a 401 JSON response otherwise.  Use:
+        err = _require_host_or_bypass()
+        if err:
+            return err
+    """
+    if _is_host_request() or _auth_bypass_allowed():
+        return None
+    return jsonify({"error": "Authentication required. POST /login with valid credentials first."}), 401
+
+
 def _request_meeting_id() -> str:
     """Best-effort meeting id for the current candidate request.
 
@@ -265,9 +287,14 @@ def login_candidate():
 
 @bp.route("/api/host/join", methods=["POST", "OPTIONS"])
 def host_join():
-    """Direct host entry: bypass login and start or rejoin a meeting as host."""
+    """Start or rejoin a meeting as host. Requires a prior authenticated
+    session (via /login) unless the development bypass is explicitly enabled."""
     if request.method == "OPTIONS":
         return jsonify({}), 200
+
+    err = _require_host_or_bypass()
+    if err:
+        return err
 
     data = request.get_json(silent=True) or {}
     host_name = (data.get("hostName") or "Interviewer").strip()
@@ -330,7 +357,10 @@ def candidate_join():
 
 @bp.route("/host_dashboard")
 def host_dashboard_landing():
-    """Post-login landing: send host straight into a meeting."""
+    """Post-login landing: send authenticated host into a meeting."""
+    err = _require_host_or_bypass()
+    if err:
+        return err
     session['authenticated'] = True
     session['host_authenticated'] = True
     session['role'] = 'interviewer'
@@ -351,6 +381,9 @@ def host_dashboard_landing():
 
 @bp.route("/host_dashboard/<meeting_id>")
 def host_dashboard(meeting_id):
+    err = _require_host_or_bypass()
+    if err:
+        return err
     meeting_id = meeting_id.upper()
     session['authenticated'] = True
     session['host_authenticated'] = True
@@ -561,6 +594,10 @@ def session_status():
 def create_room():
     if request.method == "OPTIONS":
         return jsonify({}), 200
+
+    err = _require_host_or_bypass()
+    if err:
+        return err
     
     data = request.get_json(silent=True) or {}
     session['authenticated'] = True

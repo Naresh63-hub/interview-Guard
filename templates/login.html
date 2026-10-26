@@ -460,6 +460,18 @@
 
             <form id="host-form" autocomplete="off">
                 <div class="intervue-form-group">
+                    <label for="host-email">Email</label>
+                    <input type="email" id="host-email" name="email" class="intervue-input" placeholder="your@email.com" required autocomplete="username">
+                </div>
+
+                <div class="intervue-form-group">
+                    <label for="host-password">Password</label>
+                    <div class="password-wrapper">
+                        <input type="password" id="host-password" name="password" class="intervue-input" placeholder="Enter your password" required autocomplete="current-password">
+                    </div>
+                </div>
+
+                <div class="intervue-form-group">
                     <label for="host-name">Your Name / Title</label>
                     <input type="text" id="host-name" name="hostName" class="intervue-input" placeholder="e.g. Interviewer or Dr. Alex" value="Interviewer" required autocomplete="off">
                 </div>
@@ -564,6 +576,8 @@
             if (hostForm) {
                 hostForm.addEventListener('submit', async (e) => {
                     e.preventDefault();
+                    const hostEmail = document.getElementById('host-email').value.trim();
+                    const hostPassword = document.getElementById('host-password').value;
                     const hostName = document.getElementById('host-name').value.trim() || 'Interviewer';
                     const title = document.getElementById('host-title').value.trim() || 'Technical Interview';
                     let meetingId = document.getElementById('host-meeting-id').value.trim().toUpperCase();
@@ -576,6 +590,24 @@
                     hostLoading.classList.add('show');
 
                     try {
+                        // Step 1: Authenticate via Supabase (sets session cookie)
+                        if (hostEmail && hostPassword) {
+                            const authRes = await fetch('/login', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ username: hostEmail, password: hostPassword })
+                            });
+                            const authData = await authRes.json();
+                            if (!authRes.ok || !authData.success) {
+                                hostError.textContent = authData.error || 'Invalid credentials.';
+                                hostError.classList.add('show');
+                                hostBtn.disabled = false;
+                                hostLoading.classList.remove('show');
+                                return;
+                            }
+                        }
+
+                        // Step 2: Create or join the meeting as an authenticated host
                         const response = await fetch('/api/host/join', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },

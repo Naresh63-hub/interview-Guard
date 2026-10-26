@@ -39,6 +39,32 @@ def test_join_refuses_unauthenticated_interviewer(flask_app, sio_room):
     )
 
 
+def test_join_refuses_authenticated_candidate_as_interviewer(flask_app, sio_room):
+    """An authenticated user whose role is 'candidate' must NOT be admitted
+    as an interviewer merely because authenticated=True is set."""
+    import app as app_module
+    import state
+
+    with flask_app.test_client() as http_client:
+        with http_client.session_transaction() as sess:
+            sess["authenticated"] = True
+            sess["role"] = "candidate"
+            sess["user_id"] = "user-candidate-123"
+        client = app_module.socketio.test_client(flask_app, flask_test_client=http_client)
+        client.emit(
+            "join_meeting",
+            {"meetingId": sio_room, "userName": "Bob", "role": "interviewer"},
+        )
+        received = client.get_received()
+        assert any(m["name"] == "error" and "Host session invalid" in str(m["args"]) for m in received), received
+
+        room = state.get_meeting_room(sio_room)
+        assert all(
+            (p.get("socketId") or p.get("socket_id")) != client.sid
+            for p in room.get("participants", [])
+        )
+
+
 def test_join_refuses_invalid_role(flask_app, sio_room):
     import app as app_module
 

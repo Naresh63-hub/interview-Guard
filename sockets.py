@@ -53,7 +53,11 @@ def register_sockets(socketio):
             
         from flask import session
         if role == "interviewer":
-            if not (session.get('host_authenticated') or session.get('authenticated') or session.get('role') in ('interviewer', 'host')):
+            is_host = bool(
+                session.get('host_authenticated')
+                or (session.get('authenticated') and session.get('role') in ('interviewer', 'host', 'admin'))
+            )
+            if not is_host:
                 emit("error", {"message": "Unauthorized: Host session invalid"})
                 return
         elif role == "candidate":
@@ -191,7 +195,10 @@ def register_sockets(socketio):
         # and leave the candidate's page running. Fall back to the verified
         # host/candidate session so the end signal always propagates.
         if _participant_role(meeting_id) is None:
-            is_host = session.get("host_authenticated") or session.get("authenticated")
+            is_host = bool(
+                session.get("host_authenticated")
+                or (session.get("authenticated") and session.get("role") in ("interviewer", "host", "admin"))
+            )
             cand_mid = (session.get("candidate_verified_meeting") or "").upper()
             is_candidate_of_room = cand_mid == meeting_id and bool(cand_mid)
             if not (is_host or is_candidate_of_room):
