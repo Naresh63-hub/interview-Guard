@@ -5,687 +5,150 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Intervue - Meeting Portal</title>
     <link rel="stylesheet" href="/static/styles.css">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
     <style>
         body.intervue-theme {
             background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%);
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-family: 'Inter', sans-serif;
-            margin: 0;
-            padding: 20px;
-            color: #ffffff;
-        }
-        
-        /* Custom scrollbar */
-        body.intervue-theme::-webkit-scrollbar {
-            width: 8px;
-        }
-        
-        body.intervue-theme::-webkit-scrollbar-track {
-            background: rgba(255, 255, 255, 0.05);
-            border-radius: 4px;
-        }
-        
-        body.intervue-theme::-webkit-scrollbar-thumb {
-            background: rgba(255, 255, 255, 0.2);
-            border-radius: 4px;
-        }
-        
-        body.intervue-theme::-webkit-scrollbar-thumb:hover {
-            background: rgba(255, 255, 255, 0.3);
-        }
-        
-        .intervue-container {
-            background: rgba(255, 255, 255, 0.05);
-            backdrop-filter: blur(20px);
-            border-radius: 24px;
-            padding: 36px;
-            width: 100%;
-            max-width: 520px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-            max-height: 80vh;
-            overflow-y: auto;
-        }
-        
-        .intervue-container::-webkit-scrollbar {
-            width: 6px;
-        }
-        
-        .intervue-container::-webkit-scrollbar-track {
-            background: rgba(255, 255, 255, 0.05);
-            border-radius: 3px;
-        }
-        
-        .intervue-container::-webkit-scrollbar-thumb {
-            background: rgba(255, 255, 255, 0.15);
-            border-radius: 3px;
-        }
-        
-        .intervue-container::-webkit-scrollbar-thumb:hover {
-            background: rgba(255, 255, 255, 0.25);
-        }
-        
-        .intervue-logo {
-            text-align: center;
-            margin-bottom: 24px;
-            font-size: 2.5rem;
-            font-weight: 700;
-            background: linear-gradient(135deg, #5568d3 0%, #6a4c93 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-        
-        .intervue-logo i {
-            margin-right: 8px;
-            color: #5568d3;
-        }
-        
-        .intervue-tabs {
-            display: flex;
-            margin-bottom: 24px;
-            background: rgba(255, 255, 255, 0.05);
-            border-radius: 12px;
-            padding: 6px;
-            gap: 6px;
-        }
-        
-        .intervue-tab {
-            flex: 1;
-            padding: 14px;
-            text-align: center;
-            cursor: pointer;
-            border-radius: 10px;
-            color: rgba(255, 255, 255, 0.6);
-            transition: all 0.3s ease;
-            font-weight: 500;
-            font-size: 0.95rem;
-            border: none;
-            background: transparent;
-        }
-        
-        .intervue-tab.active {
-            background: linear-gradient(135deg, #5568d3 0%, #6a4c93 100%);
-            color: white;
-            box-shadow: 0 4px 15px rgba(85, 104, 211, 0.4);
-        }
-        
-        .intervue-tab:hover:not(.active) {
-            background: rgba(255, 255, 255, 0.1);
-            color: white;
-        }
-        
-        .intervue-tab-content {
-            display: none;
-            max-height: 50vh;
-            overflow-y: auto;
-            padding-right: 4px;
-        }
-        
-        .intervue-tab-content::-webkit-scrollbar {
-            width: 4px;
-        }
-        
-        .intervue-tab-content::-webkit-scrollbar-track {
-            background: rgba(255, 255, 255, 0.05);
-            border-radius: 2px;
-        }
-        
-        .intervue-tab-content::-webkit-scrollbar-thumb {
-            background: rgba(255, 255, 255, 0.1);
-            border-radius: 2px;
-        }
-        
-        .intervue-tab-content.active {
-            display: block;
-        }
-        
-        .intervue-form-group {
-            margin-bottom: 18px;
-        }
-        
-        .intervue-form-group label {
-            display: block;
-            color: rgba(255, 255, 255, 0.8);
-            margin-bottom: 10px;
-            font-size: 0.9rem;
-            font-weight: 500;
-            letter-spacing: 0.5px;
-        }
-        
-        .intervue-input {
-            width: 100%;
-            padding: 16px 20px;
-            background: rgba(255, 255, 255, 0.08);
-            border: 1px solid rgba(255, 255, 255, 0.15);
-            border-radius: 12px;
-            color: white;
-            font-size: 1rem;
-            transition: all 0.3s ease;
-            box-sizing: border-box;
-            font-family: 'Inter', sans-serif;
-        }
-        
-        .intervue-input:focus {
-            outline: none;
-            border-color: #5568d3;
-            background: rgba(255, 255, 255, 0.12);
-            box-shadow: 0 0 0 4px rgba(85, 104, 211, 0.2);
-        }
-        
-        .intervue-input::placeholder {
-            color: rgba(255, 255, 255, 0.4);
-        }
-        
-        .intervue-btn {
-            width: 100%;
-            padding: 16px;
-            background: linear-gradient(135deg, #5568d3 0%, #6a4c93 100%);
-            border: none;
-            border-radius: 12px;
-            color: white;
-            font-size: 1rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 10px;
-            font-family: 'Inter', sans-serif;
-            letter-spacing: 0.5px;
-        }
-        
-        .intervue-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 10px 30px rgba(85, 104, 211, 0.4);
-        }
-        
-        .intervue-btn:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-            transform: none;
-        }
-        
-        .intervue-btn.secondary {
-            background: rgba(255, 255, 255, 0.1);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-        }
-        
-        .intervue-btn.secondary:hover {
-            background: rgba(255, 255, 255, 0.15);
-        }
-        
-        .intervue-btn.social {
-            background: white;
-            color: #333;
-            margin-bottom: 12px;
-        }
-        
-        .intervue-btn.social:hover {
-            background: #f8f9fa;
-        }
-        
-        .intervue-btn.google {
-            background: #4285F4;
-            color: white;
-        }
-        
-        .intervue-btn.google:hover {
-            background: #357ae8;
-        }
-        
-        .intervue-btn.github {
-            background: #333;
-            color: white;
-        }
-        
-        .intervue-btn.github:hover {
-            background: #24292e;
-        }
-        
-        .intervue-error {
-            background: rgba(239, 68, 68, 0.15);
-            border: 1px solid rgba(239, 68, 68, 0.4);
-            color: #ef4444;
-            padding: 12px 16px;
-            border-radius: 12px;
-            margin-bottom: 18px;
-            font-size: 0.9rem;
-            display: none;
-        }
-        
-        .intervue-error.show {
-            display: block;
-        }
-        
-        .intervue-success {
-            background: rgba(34, 197, 94, 0.15);
-            border: 1px solid rgba(34, 197, 94, 0.4);
-            color: #22c55e;
-            padding: 12px 16px;
-            border-radius: 12px;
-            margin-bottom: 18px;
-            font-size: 0.9rem;
-            display: none;
-        }
-        
-        .intervue-success.show {
-            display: block;
-        }
-        
-        .intervue-loading {
-            display: none;
-            text-align: center;
-            color: rgba(255, 255, 255, 0.7);
-            margin-top: 16px;
-            font-size: 0.95rem;
-        }
-        
-        .intervue-loading.show {
-            display: block;
-        }
-        
-        .intervue-checkbox {
-            display: flex;
-            align-items: center;
-            margin-bottom: 18px;
-        }
-        
-        .intervue-checkbox input[type="checkbox"] {
-            width: auto;
-            margin-right: 12px;
-            cursor: pointer;
-            accent-color: #667eea;
-        }
-        
-        .intervue-checkbox label {
-            margin: 0;
-            cursor: pointer;
-            color: rgba(255, 255, 255, 0.8);
-            font-size: 0.9rem;
-        }
-        
-        .intervue-info {
-            text-align: center;
-            color: rgba(255, 255, 255, 0.5);
-            font-size: 0.85rem;
-            margin-top: 16px;
-            line-height: 1.6;
-        }
-        
-        .intervue-info a {
-            color: #5568d3;
-            text-decoration: none;
-            font-weight: 500;
-        }
-        
-        .intervue-info a:hover {
-            color: #6a4c93;
-            text-decoration: underline;
-        }
-        
-        .password-wrapper {
-            position: relative;
-        }
-        
-        .password-toggle {
-            position: absolute;
-            right: 16px;
-            top: 50%;
-            transform: translateY(-50%);
-            background: none;
-            border: none;
-            color: rgba(255, 255, 255, 0.5);
-            cursor: pointer;
-            padding: 0;
-            font-size: 1.2rem;
-            transition: color 0.3s ease;
-        }
-        
-        .password-toggle:hover {
-            color: rgba(255, 255, 255, 0.8);
-        }
-        
-        .social-divider {
-            display: flex;
-            align-items: center;
-            margin: 20px 0;
-            color: rgba(255, 255, 255, 0.4);
-            font-size: 0.85rem;
-        }
-        
-        .social-divider::before,
-        .social-divider::after {
-            content: '';
-            flex: 1;
-            height: 1px;
-            background: rgba(255, 255, 255, 0.2);
-        }
-        
-        .social-divider span {
-            padding: 0 12px;
-        }
-        
-        .social-buttons {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-            margin-bottom: 20px;
-        }
-        
-        .social-icon {
-            margin-right: 10px;
-            font-size: 1.1rem;
-        }
-        
-        .modal-overlay {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(0, 0, 0, 0.8);
-            z-index: 1000;
-            align-items: center;
-            justify-content: center;
-        }
-        
-        .modal-overlay.show {
-            display: flex;
-        }
-        
-        .modal {
-            background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%);
-            border-radius: 24px;
-            padding: 40px;
-            width: 100%;
-            max-width: 450px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-        }
-        
-        .modal h2 {
-            color: white;
-            margin: 0 0 20px 0;
-            font-size: 1.5rem;
-        }
-        
-        .modal p {
-            color: rgba(255, 255, 255, 0.7);
-            margin-bottom: 24px;
-            line-height: 1.6;
-        }
-        
-        .modal-buttons {
-            display: flex;
-            gap: 12px;
-            margin-top: 24px;
-        }
-        
-        .modal-buttons .intervue-btn {
-            flex: 1;
-        }
+            min-height: 100vh; display: flex; align-items: center; justify-content: center;
+            font-family: 'Inter', sans-serif; margin: 0; padding: 20px; color: #fff;
+        }
+        .meeting-card {
+            background: rgba(255,255,255,0.06); backdrop-filter: blur(24px);
+            border: 1px solid rgba(255,255,255,0.12); border-radius: 24px;
+            padding: 40px 36px; width: 100%; max-width: 440px;
+        }
+        .meeting-card h1 { font-size: 1.5rem; font-weight: 700; margin: 0 0 8px; }
+        .meeting-card .subtitle { color: rgba(255,255,255,0.6); font-size: 0.9rem; margin-bottom: 28px; }
+        .tab-bar { display: flex; gap: 4px; background: rgba(0,0,0,0.2); border-radius: 12px; padding: 4px; margin-bottom: 24px; }
+        .tab-btn { flex: 1; padding: 10px; border: none; border-radius: 10px; font-weight: 600;
+            cursor: pointer; background: transparent; color: rgba(255,255,255,0.6); font-size: 0.85rem; transition: all .2s; }
+        .tab-btn.active { background: rgba(255,255,255,0.12); color: #fff; }
+        .form-group { margin-bottom: 18px; }
+        .form-group label { display: block; font-size: 0.78rem; font-weight: 600; color: rgba(255,255,255,0.7); margin-bottom: 6px; text-transform: uppercase; letter-spacing: .5px; }
+        .form-group input { width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.15);
+            background: rgba(0,0,0,0.25); color: #fff; font-size: 0.95rem; box-sizing: border-box; }
+        .form-group input:focus { outline: none; border-color: #7c6aef; }
+        .btn-primary { width: 100%; padding: 14px; border: none; border-radius: 14px; font-weight: 700;
+            font-size: 1rem; cursor: pointer; background: linear-gradient(135deg, #7c6aef, #5a4fcf); color: #fff; transition: transform .1s; }
+        .btn-primary:active { transform: scale(0.98); }
+        .error-msg { color: #ff6b6b; font-size: 0.82rem; margin-top: 10px; display: none; }
+        .panel { display: none; }
+        .panel.active { display: block; }
     </style>
 </head>
 <body class="intervue-theme">
-    <div class="intervue-container">
-        <div class="intervue-logo">
-            <i class="ph-fill ph-eye"></i><i class="ph-fill ph-shield-check" style="color: #3b82f6; margin-left: -0.5rem;"></i>
-            Intervue
+    <div class="meeting-card">
+        <h1>Intervue</h1>
+        <p class="subtitle">AI-powered interview proctoring — no account required.</p>
+        <div class="tab-bar">
+            <button class="tab-btn active" onclick="switchTab('host')">Create Interview</button>
+            <button class="tab-btn" onclick="switchTab('candidate')">Join Interview</button>
         </div>
-        
-        <div class="intervue-tabs" id="main-tabs">
-            <button class="intervue-tab active" data-tab="host">
-                <i class="ph-fill ph-user-gear"></i> Host Interview
-            </button>
-            <button class="intervue-tab" data-tab="candidate">
-                <i class="ph-fill ph-user"></i> Candidate Join
-            </button>
-        </div>
-        
-        <!-- Host Tab -->
-        <div class="intervue-tab-content active" id="host-tab">
-            <div class="intervue-error" id="host-error"></div>
-            
-            <p style="color: #cbd5e1; font-size: 0.95rem; margin-top: 0; margin-bottom: 20px; line-height: 1.5;">
-                Start a proctored session as an interviewer, or enter an existing Meeting ID.
-            </p>
 
-            <form id="host-form" autocomplete="off">
-                <div class="intervue-form-group">
-                    <label for="host-email">Email</label>
-                    <input type="email" id="host-email" name="email" class="intervue-input" placeholder="your@email.com" required autocomplete="username">
+        <!-- Host: Create/Join as interviewer -->
+        <div class="panel active" id="panel-host">
+            <form id="hostForm" autocomplete="off">
+                <div class="form-group">
+                    <label>Your Name</label>
+                    <input type="text" id="hostName" placeholder="Interviewer name" required>
                 </div>
-
-                <div class="intervue-form-group">
-                    <label for="host-password">Password</label>
-                    <div class="password-wrapper">
-                        <input type="password" id="host-password" name="password" class="intervue-input" placeholder="Enter your password" required autocomplete="current-password">
-                    </div>
+                <div class="form-group">
+                    <label>Interview Title (optional)</label>
+                    <input type="text" id="hostTitle" placeholder="e.g. Backend Engineer Screening">
                 </div>
-
-                <div class="intervue-form-group">
-                    <label for="host-name">Your Name / Title</label>
-                    <input type="text" id="host-name" name="hostName" class="intervue-input" placeholder="e.g. Interviewer or Dr. Alex" value="Interviewer" required autocomplete="off">
+                <div class="form-group">
+                    <label>Meeting ID (leave blank to create new)</label>
+                    <input type="text" id="hostMeetingId" placeholder="ABCDEF12" style="text-transform:uppercase">
                 </div>
-
-                <div class="intervue-form-group">
-                    <label for="host-title">Interview Title</label>
-                    <input type="text" id="host-title" name="title" class="intervue-input" placeholder="e.g. Software Engineer Interview" value="Technical Interview" autocomplete="off">
-                </div>
-
-                <div class="intervue-form-group">
-                    <label for="host-meeting-id">Meeting ID <span style="font-weight: normal; color: #94a3b8; font-size: 0.8rem;">(Optional - leave blank to generate new)</span></label>
-                    <input type="text" id="host-meeting-id" name="meetingId" class="intervue-input" placeholder="e.g. 84F00A15 (leave blank for new)" autocomplete="off">
-                </div>
-                
-                <button type="submit" class="intervue-btn" id="host-btn" style="margin-top: 10px;">
-                    <i class="ph-fill ph-video-camera"></i> Start / Enter as Host
-                </button>
+                <button type="submit" class="btn-primary">Start Interview</button>
+                <p class="error-msg" id="hostError"></p>
             </form>
-            
-            <div class="intervue-loading" id="host-loading">
-                <i class="ph-fill ph-spinner ph-spin"></i> Initializing meeting room...
-            </div>
         </div>
-        
-        <!-- Candidate Tab -->
-        <div class="intervue-tab-content" id="candidate-tab">
-            <div class="intervue-error" id="candidate-error"></div>
-            
-            <p style="color: #cbd5e1; font-size: 0.95rem; margin-top: 0; margin-bottom: 20px; line-height: 1.5;">
-                Enter the Meeting ID and your name to join your scheduled interview.
-            </p>
 
-            <form id="candidate-form" autocomplete="off">
-                <div class="intervue-form-group">
-                    <label for="candidate-meeting">Meeting ID or Invite Link</label>
-                    <input type="text" id="candidate-meeting" name="meetingId" class="intervue-input" placeholder="e.g. E7AF5BA2 or paste invite link" required autocomplete="off">
+        <!-- Candidate: Join with meeting ID -->
+        <div class="panel" id="panel-candidate">
+            <form id="candidateForm" autocomplete="off">
+                <div class="form-group">
+                    <label>Meeting ID</label>
+                    <input type="text" id="candidateMeetingId" placeholder="ABCDEF12" required style="text-transform:uppercase">
                 </div>
-                
-                <div class="intervue-form-group">
-                    <label for="candidate-name">Your Full Name</label>
-                    <input type="text" id="candidate-name" name="candidateName" class="intervue-input" placeholder="Enter your full name" required autocomplete="off">
+                <div class="form-group">
+                    <label>Your Name</label>
+                    <input type="text" id="candidateName" placeholder="Full name" required>
                 </div>
-                
-                <button type="submit" class="intervue-btn" id="candidate-btn" style="margin-top: 10px;">
-                    <i class="ph-fill ph-sign-in"></i> Join Interview as Candidate
-                </button>
+                <button type="submit" class="btn-primary">Join Interview</button>
+                <p class="error-msg" id="candidateError"></p>
             </form>
-            
-            <div class="intervue-loading" id="candidate-loading">
-                <i class="ph-fill ph-spinner ph-spin"></i> Connecting to interview...
-            </div>
-            
-            <div class="intervue-info" style="margin-top: 20px; font-size: 0.85rem; color: #94a3b8; text-align: center;">
-                Need a Meeting ID? Contact your interviewer or check your invitation link.
-            </div>
         </div>
     </div>
-    
-    <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            // Tab switching
-            const tabs = document.querySelectorAll('.intervue-tab');
-            const tabContents = document.querySelectorAll('.intervue-tab-content');
-            
-            tabs.forEach(tab => {
-                tab.addEventListener('click', () => {
-                    const tabName = tab.dataset.tab;
-                    
-                    tabs.forEach(t => t.classList.remove('active'));
-                    tab.classList.add('active');
-                    
-                    tabContents.forEach(content => {
-                        content.classList.remove('active');
-                        if (content.id === tabName + '-tab') {
-                            content.classList.add('active');
-                        }
-                    });
-                });
-            });
 
-            // Check URL parameters
-            const urlParams = new URLSearchParams(window.location.search);
-            const tabParam = urlParams.get('tab');
-            const midParam = urlParams.get('meeting_id');
+<script>
+function switchTab(tab) {
+    document.querySelectorAll('.tab-btn').forEach((b, i) => {
+        b.classList.toggle('active', (tab === 'host' && i === 0) || (tab === 'candidate' && i === 1));
+    });
+    document.getElementById('panel-host').classList.toggle('active', tab === 'host');
+    document.getElementById('panel-candidate').classList.toggle('active', tab === 'candidate');
+}
 
-            if (midParam) {
-                const candMeetingInput = document.getElementById('candidate-meeting');
-                if (candMeetingInput) candMeetingInput.value = midParam;
-                const candTab = document.querySelector('[data-tab="candidate"]');
-                if (candTab) candTab.click();
-            } else if (tabParam) {
-                const targetTab = document.querySelector(`[data-tab="${tabParam}"]`);
-                if (targetTab) targetTab.click();
-            }
+document.getElementById('hostForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const errEl = document.getElementById('hostError');
+    errEl.style.display = 'none';
+    const body = {
+        hostName: document.getElementById('hostName').value.trim(),
+        title: document.getElementById('hostTitle').value.trim() || 'Interview Session',
+    };
+    const mid = document.getElementById('hostMeetingId').value.trim().toUpperCase();
+    if (mid) body.meetingId = mid;
 
-            // Host Form Handler
-            const hostForm = document.getElementById('host-form');
-            const hostBtn = document.getElementById('host-btn');
-            const hostError = document.getElementById('host-error');
-            const hostLoading = document.getElementById('host-loading');
-
-            if (hostForm) {
-                hostForm.addEventListener('submit', async (e) => {
-                    e.preventDefault();
-                    const hostEmail = document.getElementById('host-email').value.trim();
-                    const hostPassword = document.getElementById('host-password').value;
-                    const hostName = document.getElementById('host-name').value.trim() || 'Interviewer';
-                    const title = document.getElementById('host-title').value.trim() || 'Technical Interview';
-                    let meetingId = document.getElementById('host-meeting-id').value.trim().toUpperCase();
-
-                    const pastedUrl = meetingId.match(/\/meet\/([A-Z0-9]{8})/);
-                    if (pastedUrl) meetingId = pastedUrl[1];
-
-                    hostError.classList.remove('show');
-                    hostBtn.disabled = true;
-                    hostLoading.classList.add('show');
-
-                    try {
-                        // Step 1: Authenticate via Supabase (sets session cookie)
-                        if (hostEmail && hostPassword) {
-                            const authRes = await fetch('/login', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ username: hostEmail, password: hostPassword })
-                            });
-                            const authData = await authRes.json();
-                            if (!authRes.ok || !authData.success) {
-                                hostError.textContent = authData.error || 'Invalid credentials.';
-                                hostError.classList.add('show');
-                                hostBtn.disabled = false;
-                                hostLoading.classList.remove('show');
-                                return;
-                            }
-                        }
-
-                        // Step 2: Create or join the meeting as an authenticated host
-                        const response = await fetch('/api/host/join', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ hostName, title, meetingId })
-                        });
-
-                        const data = await response.json();
-                        if (response.ok && data.success) {
-                            localStorage.setItem('role', 'host');
-                            localStorage.setItem('displayName', hostName);
-                            window.location.href = `/host_dashboard/${data.meetingId}`;
-                        } else {
-                            hostError.textContent = data.error || 'Failed to start meeting as Host.';
-                            hostError.classList.add('show');
-                            hostBtn.disabled = false;
-                        }
-                    } catch (err) {
-                        hostError.textContent = 'Connection error. Please check if the server is running.';
-                        hostError.classList.add('show');
-                        hostBtn.disabled = false;
-                    } finally {
-                        hostLoading.classList.remove('show');
-                    }
-                });
-            }
-
-            // Candidate Form Handler
-            const candidateForm = document.getElementById('candidate-form');
-            const candidateBtn = document.getElementById('candidate-btn');
-            const candidateError = document.getElementById('candidate-error');
-            const candidateLoading = document.getElementById('candidate-loading');
-
-            if (candidateForm) {
-                candidateForm.addEventListener('submit', async (e) => {
-                    e.preventDefault();
-                    let meetingId = document.getElementById('candidate-meeting').value.trim().toUpperCase();
-                    const candidateName = document.getElementById('candidate-name').value.trim() || 'Candidate';
-
-                    const pastedUrl = meetingId.match(/\/meet\/([A-Z0-9]{8})/);
-                    if (pastedUrl) meetingId = pastedUrl[1];
-
-                    if (!meetingId) {
-                        candidateError.textContent = 'Please enter a Meeting ID';
-                        candidateError.classList.add('show');
-                        return;
-                    }
-
-                    candidateError.classList.remove('show');
-                    candidateBtn.disabled = true;
-                    candidateLoading.classList.add('show');
-
-                    try {
-                        const response = await fetch('/api/candidate/join', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ meetingId, displayName: candidateName })
-                        });
-
-                        const data = await response.json();
-                        if (response.ok && (data.success || data.meetingId)) {
-                            localStorage.setItem('role', 'candidate');
-                            localStorage.setItem('displayName', candidateName);
-                            window.location.href = '/candidate_dashboard/' + (data.meetingId || meetingId);
-                        } else {
-                            candidateError.textContent = data.error || 'Could not join meeting. Please check the meeting ID.';
-                            candidateError.classList.add('show');
-                            candidateBtn.disabled = false;
-                        }
-                    } catch (error) {
-                        candidateError.textContent = 'Connection error. Please check if the server is running.';
-                        candidateError.classList.add('show');
-                        candidateBtn.disabled = false;
-                    } finally {
-                        candidateLoading.classList.remove('show');
-                    }
-                });
-            }
+    try {
+        const res = await fetch('/api/host/join', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
         });
-    </script>
+        const data = await res.json();
+        if (!res.ok || data.error) {
+            errEl.textContent = data.error || 'Request failed';
+            errEl.style.display = 'block';
+            return;
+        }
+        // Persist capability token in sessionStorage for page-level access
+        sessionStorage.setItem('hostToken_' + data.meetingId, data.hostToken);
+        window.location.href = '/host_dashboard/' + data.meetingId;
+    } catch (ex) {
+        errEl.textContent = 'Network error: ' + ex.message;
+        errEl.style.display = 'block';
+    }
+});
+
+document.getElementById('candidateForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const errEl = document.getElementById('candidateError');
+    errEl.style.display = 'none';
+    const body = {
+        meetingId: document.getElementById('candidateMeetingId').value.trim().toUpperCase(),
+        displayName: document.getElementById('candidateName').value.trim(),
+    };
+    try {
+        const res = await fetch('/api/candidate/join', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) {
+            errEl.textContent = data.error || 'Request failed';
+            errEl.style.display = 'block';
+            return;
+        }
+        window.location.href = '/candidate_dashboard/' + data.meetingId;
+    } catch (ex) {
+        errEl.textContent = 'Network error: ' + ex.message;
+        errEl.style.display = 'block';
+    }
+});
+</script>
 </body>
 </html>

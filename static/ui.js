@@ -560,11 +560,24 @@ function applySessionStatus(status) {
     updateTimer();
 }
 
+// ─── Host Capability Token Helper ────────────────────────────────────────────
+const _hostToken = () =>
+    (typeof HOST_TOKEN !== "undefined" && HOST_TOKEN)
+    || sessionStorage.getItem('hostToken_' + (typeof MEETING_ID !== 'undefined' ? MEETING_ID : ''))
+    || '';
+
+const _hostHeaders = (extra = {}) => ({
+    ...extra,
+    ...(window.userRole === 'interviewer' || window.userRole === 'host'
+        ? { 'X-Meeting-Host-Token': _hostToken() }
+        : {}),
+});
+
 async function postSessionState(endpoint) {
     const meetingId = typeof MEETING_ID !== 'undefined' ? MEETING_ID : "";
     const response = await fetch(apiUrl(endpoint), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: _hostHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
             role: userRole,
             displayName: localStorage.getItem("displayName") || "",
@@ -607,7 +620,7 @@ syncParticipantUI();
 
 // ─── Meetings API ─────────────────────────────────────────────────────────────
 function loadMeetings() {
-    fetch(apiUrl("/get_meetings"))
+    fetch(apiUrl("/get_meetings"), { headers: _hostHeaders() })
         .then((res) => res.json())
         .then((data) => {
             if (!meetingListEl) return;
@@ -658,7 +671,7 @@ async function createMeeting() {
     try {
         const response = await fetch(apiUrl("/create_meeting"), {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: _hostHeaders({ "Content-Type": "application/json" }),
             body: JSON.stringify(payload),
         });
 
@@ -696,7 +709,7 @@ async function getAIInsights() {
     try {
         const response = await fetch(apiUrl("/ai_insights"), {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: _hostHeaders({ "Content-Type": "application/json" }),
             body: JSON.stringify({ description }),
         });
 
@@ -756,7 +769,7 @@ async function endInterview() {
     try {
         await fetch(`/api/session/${MEETING_ID}/end`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: _hostHeaders({ "Content-Type": "application/json" }),
             body: JSON.stringify({ meetingId: MEETING_ID }),
         });
     } catch (apiErr) {
@@ -1776,7 +1789,7 @@ if (btnAnalyzeChat) {
         try {
             const res = await fetch(apiUrl("/ai_insights"), {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: _hostHeaders({ "Content-Type": "application/json" }),
                 body: JSON.stringify({ description: messages })
             });
             const data = await res.json();
@@ -2038,7 +2051,7 @@ async function copyMeetingInvite() {
     // session cookie set by the signed-link route.
     let joinUrl = "";
     try {
-        const res = await fetch(apiUrl(`/api/room/${encodeURIComponent(meetingId)}/invite`));
+        const res = await fetch(apiUrl(`/api/room/${encodeURIComponent(meetingId)}/invite`), { headers: _hostHeaders() });
         if (res.ok) {
             const data = await res.json();
             if (data.link) joinUrl = `${window.location.origin}${data.link}`;

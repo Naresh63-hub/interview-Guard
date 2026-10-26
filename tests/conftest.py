@@ -39,11 +39,25 @@ def client(flask_app):
 
 @pytest.fixture
 def host_client(flask_app):
-    """Client whose session carries the host_authenticated flag."""
+    """Client whose session carries the host_authenticated flag (legacy)."""
     c = flask_app.test_client()
     with c.session_transaction() as sess:
         sess["host_authenticated"] = True
     return c
+
+
+@pytest.fixture
+def host_client_with_token(flask_app):
+    """Client that created a meeting via /create-room (no login) and holds
+    the capability token in both its session and header-accessible form.
+    Returns (client, meeting_id, host_token)."""
+    c = flask_app.test_client()
+    resp = c.post("/create-room", json={"hostName": "TestHost", "title": "Test"})
+    assert resp.status_code == 200
+    data = resp.get_json()
+    meeting_id = data["meetingId"]
+    token = data["hostToken"]
+    return c, meeting_id, token
 
 
 def make_landmarks(ear_value: float = 0.35):

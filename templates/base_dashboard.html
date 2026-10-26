@@ -373,6 +373,11 @@
 
         <script>
             window.MEETING_ID = "{{ meeting_id }}";
+            window.HOST_TOKEN = "{{ host_token or '' }}";
+            if (!window.HOST_TOKEN) {
+                const stored = sessionStorage.getItem('hostToken_' + window.MEETING_ID);
+                if (stored) window.HOST_TOKEN = stored;
+            }
         </script>
         <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
         {% block scripts %}{% endblock %}

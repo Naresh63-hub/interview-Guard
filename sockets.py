@@ -53,12 +53,9 @@ def register_sockets(socketio):
             
         from flask import session
         if role == "interviewer":
-            is_host = bool(
-                session.get('host_authenticated')
-                or (session.get('authenticated') and session.get('role') in ('interviewer', 'host', 'admin'))
-            )
-            if not is_host:
-                emit("error", {"message": "Unauthorized: Host session invalid"})
+            host_token = (data.get("hostToken") or "").strip()
+            if not host_token or host_token != room.get("hostToken", ""):
+                emit("error", {"message": "Unauthorized: Invalid host capability token"})
                 return
         elif role == "candidate":
             cand_mid = (session.get('candidate_verified_meeting') or "").upper()
@@ -195,10 +192,11 @@ def register_sockets(socketio):
         # and leave the candidate's page running. Fall back to the verified
         # host/candidate session so the end signal always propagates.
         if _participant_role(meeting_id) is None:
-            is_host = bool(
-                session.get("host_authenticated")
-                or (session.get("authenticated") and session.get("role") in ("interviewer", "host", "admin"))
-            )
+            host_token = (data.get("hostToken") or "").strip()
+            if not host_token:
+                host_token = session.get(f"host_token_{meeting_id}", "")
+            room = state.get_meeting_room(meeting_id)
+            is_host = bool(host_token and room and host_token == room.get("hostToken", ""))
             cand_mid = (session.get("candidate_verified_meeting") or "").upper()
             is_candidate_of_room = cand_mid == meeting_id and bool(cand_mid)
             if not (is_host or is_candidate_of_room):

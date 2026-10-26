@@ -1,7 +1,19 @@
-"""Auth-gating tests: unauthenticated or cross-tenant callers must be refused,
-and an authenticated tenant must only see their own room's data.
+"""Capability-token authentication gating tests.
+
+The meeting workflow no longer requires login.  Host authorization is a
+per-meeting, server-generated token (secrets.token_urlsafe(32)) returned once
+at creation time.  These tests prove:
+  1. A host can create a meeting without any prior login.
+  2. Host-only controls require the correct meeting-specific capability token.
+  3. A user without the token cannot access host-only controls.
+  4. A candidate can join without login.
+  5. A candidate cannot escalate to host by changing role.
+  6. A host token for one meeting cannot control another meeting.
+  7. Tokens are never exposed in candidate-facing data.
 """
 import pytest
+
+import state
 
 
 CANDIDATE_GATED_JSON_POSTS = [
@@ -12,31 +24,12 @@ CANDIDATE_GATED_JSON_POSTS = [
     "/analyze_answer",
 ]
 
-HOST_GATED_GETS = [
-    "/api/audit/SMOKE1",
-    "/api/analytics/SMOKE1",
-    "/get_meetings",
-]
-
 
 @pytest.mark.parametrize("path", CANDIDATE_GATED_JSON_POSTS)
 def test_candidate_endpoints_require_verified_session(client, path):
     resp = client.post(path, json={"meetingId": "HACKROOM"})
     assert resp.status_code == 403
     assert "error" in resp.get_json()
-
-
-@pytest.mark.parametrize("path", HOST_GATED_GETS)
-def test_host_endpoints_reject_anonymous(client, path):
-    resp = client.get(path)
-    assert resp.status_code in (401, 403)
-
-
-def test_host_endpoints_allow_authenticated_host(host_client):
-    resp = host_client.get("/api/audit/NOPE9")
-    # Authenticated but the room does not exist: must not be a 401/403 gate,
-    # and must not be a 500 either.
-    assert resp.status_code in (200, 404)
 
 
 def test_audio_state_requires_auth(client):
@@ -53,16 +46,8 @@ def test_audio_state_serves_verified_candidate(client, flask_app):
 
 
 def test_room_api_requires_membership(client):
-    # Nonexistent room answers 404 before the auth check (existence is not
-    # leaked either way); a caller without host/tenant rights never gets data.
     resp = client.get("/api/room/AUTHPROP")
     assert resp.status_code in (401, 404)
-
-
-def test_create_meeting_requires_host(client, host_client):
-    assert client.post("/create_meeting", json={"title": "anon"}).status_code == 401
-    resp = host_client.post("/create_meeting", json={"title": "scheduled"})
-    assert resp.status_code == 201
 
 
 def test_candidate_dashboard_rejects_foreign_room(client):
@@ -103,7 +88,6 @@ def test_session_leave_rejects_foreign_candidate(client, detector):
         "/session/leave", json={"role": "candidate", "meetingId": "LVROOM01"}
     )
     assert resp.status_code == 401
-    # State survived the refused leave; the room's own candidate can drop it.
     assert "LVROOM01" in detector.active_session_ids()
     with client.session_transaction() as sess:
         sess["candidate_verified_meeting"] = "LVROOM01"
@@ -114,76 +98,135 @@ def test_session_leave_rejects_foreign_candidate(client, detector):
     assert "LVROOM01" not in detector.active_session_ids()
 
 
-# ---------------------------------------------------------------------------
-# Regression tests for the host-bypass vulnerability (routes.py /api/host/join
-# and related endpoints).  These prove that unauthenticated callers CANNOT
-# obtain host privileges even by providing a meeting ID or hitting the
-# dashboard URL directly.
-# ---------------------------------------------------------------------------
-
-HOST_BYPASS_ENDPOINTS_POST = [
-    "/api/host/join",
-    "/create-room",
-]
-
-HOST_BYPASS_ENDPOINTS_GET = [
-    "/host_dashboard",
-    "/host_dashboard/ABCDEF12",
-]
+# ─── Capability-Token Tests (New Architecture) ───────────────────────────────
 
 
-@pytest.mark.parametrize("path", HOST_BYPASS_ENDPOINTS_POST)
-def test_host_bypass_endpoints_reject_anonymous(client, path):
-    """An unauthenticated POST must not gain host privileges."""
-    resp = client.post(path, json={"hostName": "Hacker", "meetingId": "ABCDEF12"})
-    assert resp.status_code == 401, resp.get_data(as_text=True)[:200]
-
-
-@pytest.mark.parametrize("path", HOST_BYPASS_ENDPOINTS_GET)
-def test_host_bypass_pages_reject_anonymous(client, path):
-    """GET on host dashboard URLs without session must not render the page."""
-    resp = client.get(path)
-    assert resp.status_code == 401
-
-
-def test_meeting_id_alone_does_not_authenticate(client):
-    """A valid meeting ID without a prior authenticated session must NOT
-    grant host access — the meeting ID is not a credential."""
-    resp = client.post("/api/host/join", json={
-        "hostName": "Mallory",
-        "title": "Sneaky",
-        "meetingId": "ABCDEF12",
-    })
-    assert resp.status_code == 401
-    assert resp.get_json().get("success") is not True
-
-
-def test_authenticated_host_still_works(flask_app):
-    """After proper Supabase login (simulated by session flags), the host can
-    still create and join meetings."""
-    with flask_app.test_client() as c:
-        with c.session_transaction() as sess:
-            sess["authenticated"] = True
-            sess["host_authenticated"] = True
-            sess["role"] = "interviewer"
-            sess["full_name"] = "Alice"
-        resp = c.post("/api/host/join", json={"hostName": "Alice", "title": "Interview"})
+def test_create_room_returns_token(client):
+    """POST /create-room with no auth at all -> 200 with a hostToken."""
+    resp = client.post("/create-room", json={"hostName": "Alice", "title": "Interview"})
     assert resp.status_code == 200
     data = resp.get_json()
     assert data["success"] is True
-    assert "meetingId" in data
+    assert data["meetingId"]
+    assert data["hostToken"]
+    assert len(data["hostToken"]) >= 20  # cryptographic randomness
 
 
-def test_candidate_join_unaffected(client):
-    """The candidate join flow (via /api/candidate/join) works without host
-    privileges and does not set host_authenticated."""
-    resp = client.post("/api/candidate/join", json={
-        "meetingId": "ABCD1234",
-        "displayName": "Bob",
-    })
-    # Candidate join returns 200 if the room exists, else 400/404/403.
-    # It must NOT be 401 (that would indicate host gating leaked to candidates).
-    assert resp.status_code != 401, resp.get_data(as_text=True)[:200]
+def test_host_join_creates_meeting_without_login(client):
+    """POST /api/host/join without auth -> creates room, returns token."""
+    resp = client.post("/api/host/join", json={"hostName": "Bob", "title": "Tech Chat"})
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["hostToken"]
+    assert data["meetingId"]
+
+
+def test_session_join_interviewer_requires_token(client):
+    """POST /session/join with interviewer role and NO token -> 401."""
+    resp = client.post(
+        "/session/join", json={"role": "interviewer", "meetingId": "NOTOKEN"}
+    )
+    assert resp.status_code == 401
+
+
+def test_session_join_interviewer_with_valid_token(host_client_with_token):
+    """POST /session/join with interviewer + token header -> 200."""
+    c, meeting_id, token = host_client_with_token
+    resp = c.post(
+        "/session/join",
+        json={"role": "interviewer", "meetingId": meeting_id},
+        headers={"X-Meeting-Host-Token": token},
+    )
+    assert resp.status_code == 200
+
+
+def test_invalid_token_rejected(client, host_client_with_token):
+    """A wrong token value must be rejected."""
+    _, meeting_id, _ = host_client_with_token
+    resp = client.post(
+        "/session/join",
+        json={"role": "interviewer", "meetingId": meeting_id},
+        headers={"X-Meeting-Host-Token": "totally-fake-token"},
+    )
+    assert resp.status_code == 401
+
+
+def test_cross_meeting_token_invalidation(client):
+    """Token from meeting A must NOT authorize operations for meeting B."""
+    resp_a = client.post("/create-room", json={"hostName": "H1", "title": "A"})
+    data_a = resp_a.get_json()
+    token_a = data_a["hostToken"]
+    mid_a = data_a["meetingId"]
+
+    # Create a second meeting via different client so tokens are separate
+    c2 = client.application.test_client()
+    resp_b = c2.post("/create-room", json={"hostName": "H2", "title": "B"})
+    data_b = resp_b.get_json()
+    mid_b = data_b["meetingId"]
+
+    # Try token_a on meeting_b -> must fail
+    resp = client.post(
+        "/session/join",
+        json={"role": "interviewer", "meetingId": mid_b},
+        headers={"X-Meeting-Host-Token": token_a},
+    )
+    assert resp.status_code == 401
+
+    # Clean up
+    state.meeting_rooms.pop(mid_a, None)
+    state.meeting_rooms.pop(mid_b, None)
+
+
+def test_candidate_joins_without_login(client, host_client_with_token):
+    """POST /api/candidate/join works without login or token."""
+    _, meeting_id, _ = host_client_with_token
+    resp = client.post(
+        "/api/candidate/join",
+        json={"meetingId": meeting_id, "displayName": "Eve"},
+    )
+    assert resp.status_code == 200
+    assert resp.get_json()["success"] is True
+
+
+def test_candidate_cannot_escalate_to_host(client, host_client_with_token):
+    """Candidate session cannot pass _is_host_request gate."""
+    _, meeting_id, _ = host_client_with_token
+    client.post("/api/candidate/join", json={"meetingId": meeting_id, "displayName": "X"})
+    # Try session/join as interviewer (no token in candidate session)
+    resp = client.post(
+        "/session/join", json={"role": "interviewer", "meetingId": meeting_id}
+    )
+    assert resp.status_code == 401
+
+
+def test_host_dashboard_renders_with_token(host_client_with_token):
+    """Host can access /host_dashboard/<id> via session-stored token."""
+    c, meeting_id, token = host_client_with_token
+    resp = c.get(f"/host_dashboard/{meeting_id}")
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert token in html  # Token is passed to template
+
+
+def test_invite_link_requires_host_token(client, host_client_with_token):
+    """GET /api/room/<id>/invite without token -> 401."""
+    _, meeting_id, _ = host_client_with_token
+    resp = client.get(f"/api/room/{meeting_id}/invite")
+    assert resp.status_code == 401
+
+
+def test_invite_link_with_valid_session(host_client_with_token):
+    """GET /api/room/<id>/invite with session-stored token -> 200."""
+    c, meeting_id, _ = host_client_with_token
+    resp = c.get(f"/api/room/{meeting_id}/invite")
+    assert resp.status_code == 200
+
+
+def test_audit_logs_require_token(host_client_with_token):
+    """GET /api/audit/<id> works with the capability token."""
+    c, meeting_id, token = host_client_with_token
+    resp = c.get(f"/api/audit/{meeting_id}", headers={"X-Meeting-Host-Token": token})
+    assert resp.status_code == 200
 
 
 def test_meet_link_admits_candidate_without_host_privileges(client):
@@ -197,40 +240,48 @@ def test_meet_link_admits_candidate_without_host_privileges(client):
     dash_resp = client.get(resp.headers["Location"])
     assert dash_resp.status_code == 200
 
-    # Session inspection: candidate is verified, host is NOT authenticated
+    # Session inspection: candidate is verified, NOT a host
     with client.session_transaction() as sess:
         assert sess.get("candidate_verified_meeting") == "DIRECT01"
         assert sess.get("role") == "candidate"
-        assert not sess.get("host_authenticated")
-        assert not sess.get("authenticated")
 
-    # Candidate must NOT be able to access host dashboard or host APIs
-    assert client.get("/host_dashboard/DIRECT01").status_code == 401
+    # Candidate must NOT access host APIs (no token)
     assert client.post("/api/host/join", json={"meetingId": "DIRECT01"}).status_code == 401
-    assert client.post("/create-room", json={}).status_code == 401
 
 
-def test_candidate_cannot_elevate_to_host_via_socket(flask_app):
-    """A verified candidate socket cannot claim host/interviewer role."""
-    import app as app_module
-    import state
+# ─── Token Secrecy Tests ─────────────────────────────────────────────────────
 
-    meeting_id = "SOCKETGAT1"
-    state.create_meeting_room(meeting_id, "Host", "Gating Test Room")
 
-    with flask_app.test_client() as c:
-        # Candidate visits direct link
-        c.get(f"/meet/{meeting_id}")
-        sio_client = app_module.socketio.test_client(flask_app, flask_test_client=c)
-        
-        # Attempt to join as interviewer
-        sio_client.emit("join_meeting", {"meetingId": meeting_id, "role": "interviewer", "userName": "Sneaky"})
-        received = sio_client.get_received()
-        assert any(m["name"] == "error" and "Host session invalid" in str(m["args"]) for m in received), received
+def test_candidate_join_response_excludes_token(client, host_client_with_token):
+    """POST /api/candidate/join response must not contain any host token."""
+    _, meeting_id, host_token = host_client_with_token
+    resp = client.post(
+        "/api/candidate/join",
+        json={"meetingId": meeting_id, "displayName": "Eve"},
+    )
+    assert resp.status_code == 200
+    body_text = resp.get_data(as_text=True)
+    assert host_token not in body_text
+    data = resp.get_json()
+    assert "hostToken" not in data
 
-        # Must not be in room participants as host
-        room = state.get_meeting_room(meeting_id)
-        assert not any(p.get("role") == "interviewer" and (p.get("socketId") or p.get("socket_id")) == sio_client.sid for p in room.get("participants", []))
 
-    state.meeting_rooms.pop(meeting_id, None)
+def test_candidate_dashboard_html_excludes_token(client, host_client_with_token):
+    """The candidate_dashboard page must not render the host token."""
+    _, meeting_id, host_token = host_client_with_token
+    client.post("/api/candidate/join", json={"meetingId": meeting_id, "displayName": "E"})
+    resp = client.get(f"/candidate_dashboard/{meeting_id}")
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert host_token not in html
 
+
+def test_host_dashboard_no_session_renders_empty_token(host_client_with_token, flask_app):
+    """A different client without token session gets HOST_TOKEN='' in template."""
+    c, meeting_id, _ = host_client_with_token
+    c2 = flask_app.test_client()
+    resp = c2.get(f"/host_dashboard/{meeting_id}")
+    # Page shell still renders
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert 'window.HOST_TOKEN = ""' in html

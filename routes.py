@@ -112,34 +112,22 @@ def _is_candidate_request() -> bool:
     return bool(verified_meeting)
 
 
-def _is_host_request() -> bool:
-    """True when the caller is an authenticated host (session-based flag)."""
-    return bool(
-        session.get("host_authenticated")
-        or (session.get("authenticated") and session.get("role") in ("admin", "interviewer"))
-    )
+def _is_host_request(meeting_id: str = None) -> bool:
+    """Validate that the caller holds the capability token for *meeting_id*."""
+    if not meeting_id:
+        meeting_id = _request_meeting_id()
+    if not meeting_id:
+        return any(k.startswith("host_token_") for k in session)
+    token = (request.headers.get("X-Meeting-Host-Token") or "").strip()
+    if not token:
+        token = session.get(f"host_token_{meeting_id}", "")
+    room = state.get_meeting_room(meeting_id)
+    if not room:
+        return False
+    return bool(token) and token == room.get("hostToken", "")
 
 
-def _auth_bypass_allowed() -> bool:
-    """Return True only when an explicit server-side environment flag permits
-    the development login-bypass flow (granting host session without Supabase
-    credentials). FAILS CLOSED: unset or any value other than 1/true/yes
-    disables the bypass, ensuring production deployments always require
-    authentication.  The flag is NEVER read from a request parameter."""
-    return os.getenv("AUTH_BYPASS", "0").strip().lower() in ("1", "true", "yes")
 
-
-def _require_host_or_bypass():
-    """Guard for host-only endpoints.  Returns None (proceed) when the caller
-    already has an authenticated host session or the dev bypass is explicitly
-    allowed.  Returns a 401 JSON response otherwise.  Use:
-        err = _require_host_or_bypass()
-        if err:
-            return err
-    """
-    if _is_host_request() or _auth_bypass_allowed():
-        return None
-    return jsonify({"error": "Authentication required. POST /login with valid credentials first."}), 401
 
 
 def _request_meeting_id() -> str:
@@ -273,8 +261,7 @@ def register():
 
 @bp.route("/login/host")
 def login_host():
-    # Redirect to main login page
-    return redirect(url_for('main.login'))
+    return redirect(url_for('main.host_dashboard_landing'))
 
 @bp.route("/login/candidate")
 def login_candidate():
@@ -287,44 +274,37 @@ def login_candidate():
 
 @bp.route("/api/host/join", methods=["POST", "OPTIONS"])
 def host_join():
-    """Start or rejoin a meeting as host. Requires a prior authenticated
-    session (via /login) unless the development bypass is explicitly enabled."""
+    """Join or create a meeting as host.  No login required."""
     if request.method == "OPTIONS":
         return jsonify({}), 200
-
-    err = _require_host_or_bypass()
-    if err:
-        return err
 
     data = request.get_json(silent=True) or {}
     host_name = (data.get("hostName") or "Interviewer").strip()
     title = (data.get("title") or "Interview Session").strip()
     meeting_id = (data.get("meetingId") or "").strip().upper()
 
-    session['authenticated'] = True
-    session['host_authenticated'] = True
-    session['role'] = 'interviewer'
-    session['full_name'] = host_name
-    session['host_name'] = host_name
-    if not session.get('user_id'):
-        session['user_id'] = str(uuid.uuid4())
-
     if meeting_id:
+        token = (request.headers.get("X-Meeting-Host-Token", "").strip()
+                 or (data.get("hostToken") or "").strip())
         room = state.get_meeting_room(meeting_id)
         if not room:
-            room = state.create_meeting_room(meeting_id, host_name, title)
+            return jsonify({"error": "Room not found"}), 404
+        if not token or token != room.get("hostToken", ""):
+            return jsonify({"error": "Invalid host capability token"}), 401
         signed_link = _generate_signed_link(meeting_id)
     else:
-        meeting_id, signed_link = _create_meeting({
-            "hostName": host_name,
-            "title": title
-        })
+        meeting_id, signed_link, token = _create_meeting({"hostName": host_name, "title": title})
+
+    session[f"host_token_{meeting_id}"] = token
+    session["displayName"] = host_name
+    session["role"] = "interviewer"
 
     return jsonify({
         "success": True,
         "meetingId": meeting_id,
+        "hostToken": token,
         "link": signed_link,
-        "hostName": host_name
+        "hostName": host_name,
     }), 200
 
 @bp.route("/api/candidate/join", methods=["POST", "OPTIONS"])
@@ -357,52 +337,37 @@ def candidate_join():
 
 @bp.route("/host_dashboard")
 def host_dashboard_landing():
-    """Post-login landing: send authenticated host into a meeting."""
-    err = _require_host_or_bypass()
-    if err:
-        return err
-    session['authenticated'] = True
-    session['host_authenticated'] = True
-    session['role'] = 'interviewer'
-    if not session.get('full_name'):
-        session['full_name'] = 'Interviewer'
-    if not session.get('user_id'):
-        session['user_id'] = str(uuid.uuid4())
+    """Create or resume a meeting and enter the host dashboard (no login)."""
+    # Reuse most recent room if session already holds a token
+    for key in list(session.keys()):
+        if key.startswith("host_token_"):
+            mid = key.removeprefix("host_token_")
+            room = state.get_meeting_room(mid)
+            if room and room.get("status") != "ended":
+                return redirect(url_for('main.host_dashboard', meeting_id=mid))
 
-    # Reuse host's most recent meeting if one exists
-    user_id = session.get('user_id')
-    if user_id:
-        room = state.get_latest_meeting_for_user(user_id)
-        if room and room.get("id"):
-            return redirect(url_for('main.host_dashboard', meeting_id=room["id"]))
-
-    meeting_id, _ = _create_meeting({})
+    # Create a fresh meeting (no auth required)
+    meeting_id, _, host_token = _create_meeting({})
+    session[f"host_token_{meeting_id}"] = host_token
     return redirect(url_for('main.host_dashboard', meeting_id=meeting_id))
 
 @bp.route("/host_dashboard/<meeting_id>")
 def host_dashboard(meeting_id):
-    err = _require_host_or_bypass()
-    if err:
-        return err
+    """Render the host dashboard page shell."""
     meeting_id = meeting_id.upper()
-    session['authenticated'] = True
-    session['host_authenticated'] = True
-    if 'role' not in session:
-        session['role'] = 'interviewer'
-    if 'full_name' not in session:
-        session['full_name'] = 'Interviewer'
-    if 'user_id' not in session:
-        session['user_id'] = str(uuid.uuid4())
+    if not session.get('displayName'):
+        session['displayName'] = 'Interviewer'
 
     room = state.get_meeting_room(meeting_id)
     if not room:
-        room = state.create_meeting_room(meeting_id, session.get('full_name', 'Host'), "Interview Session")
+        room = state.create_meeting_room(meeting_id, session.get('displayName', 'Host'), "Interview Session")
 
     return render_template(
         "host_dashboard.html",
         meeting_id=meeting_id,
         room_title=room.get("title", "Interview Session"),
-        room_host=room.get("host", session.get('full_name', 'Host')),
+        room_host=room.get("host", session.get('displayName', 'Host')),
+        host_token=session.get(f"host_token_{meeting_id}", ""),
     )
 
 @bp.route("/candidate_dashboard/<meeting_id>")
@@ -511,7 +476,7 @@ def session_join():
     # room: an interviewer needs an authenticated host session, a candidate
     # must carry the verification set by the signed invite link. Without this
     # any anonymous POST could wipe a live interview's pose/blink/audio history.
-    if role == "interviewer" and not _is_host_request():
+    if role == "interviewer" and not _is_host_request(meeting_id):
         return jsonify({"error": "Unauthorized"}), 401
     if role == "candidate" and session.get("candidate_verified_meeting") != meeting_id:
         return jsonify({"error": "Unauthorized"}), 401
@@ -557,7 +522,7 @@ def session_leave():
     # authenticated host) may drop the room's per-meeting state.
     if role == "candidate" and session.get("candidate_verified_meeting") != meeting_id:
         return jsonify({"error": "Unauthorized"}), 401
-    if role == "interviewer" and not _is_host_request():
+    if role == "interviewer" and not _is_host_request(meeting_id):
         return jsonify({"error": "Unauthorized"}), 401
 
     if role:
@@ -592,57 +557,45 @@ def session_status():
 @bp.route("/create-room", methods=["POST", "OPTIONS"])
 @limiter.limit("20 per minute")
 def create_room():
+    """Create a meeting and return its capability token.  No login required."""
     if request.method == "OPTIONS":
         return jsonify({}), 200
 
-    err = _require_host_or_bypass()
-    if err:
-        return err
-    
     data = request.get_json(silent=True) or {}
-    session['authenticated'] = True
-    session['host_authenticated'] = True
-    session['role'] = 'interviewer'
-    if not session.get('full_name'):
-        session['full_name'] = (data.get("hostName") or "Interviewer").strip()
-    if not session.get('user_id'):
-        session['user_id'] = str(uuid.uuid4())
+    meeting_id, signed_link, host_token = _create_meeting(data)
 
-    meeting_id, signed_link = _create_meeting(data)
-    return jsonify({"success": True, "meetingId": meeting_id, "link": signed_link}), 200
+    session[f"host_token_{meeting_id}"] = host_token
+    session["displayName"] = (data.get("hostName") or "Interviewer").strip()
+    session["role"] = "interviewer"
+
+    return jsonify({
+        "success": True,
+        "meetingId": meeting_id,
+        "hostToken": host_token,
+        "link": signed_link,
+    }), 200
 
 def _create_meeting(data):
-    """Shared room-creation core used by /create-room and the post-login
-    /host_dashboard landing. Returns (meeting_id, signed_link) and sets the
-    host session flags."""
-    host_name = (data.get("hostName") or session.get('full_name', 'Host')).strip()
+    """Shared room-creation core.  Returns (meeting_id, signed_link, host_token)."""
+    host_name = (data.get("hostName") or session.get('displayName', 'Host')).strip()
     title = (data.get("title") or "Interview Session").strip()
     meeting_id = str(uuid.uuid4())[:8].upper()
-    
-    # Create meeting room with database persistence
+
     metadata = {
         "partner_id": data.get("partnerId", ""),
-        "created_by": session.get('username', 'web'),
-        "user_id": session.get('user_id', ''),
-        "user_role": session.get('role', 'interviewer'),
-        "host_ip": request.remote_addr
+        "created_by": "web",
+        "host_ip": request.remote_addr if request else "",
     }
     room = state.create_meeting_room(meeting_id, host_name, title, metadata)
-    
-    # Authenticate host (session-based)
-    session['host_authenticated'] = True
-    session['host_name'] = host_name
-    session['host_role'] = session.get('role', 'interviewer')
-    
-    # Generate signed link for candidate
+    host_token = room.get("hostToken", "")
+
     signed_link = _generate_signed_link(meeting_id)
-    
-    # Log room creation to audit log
-    state.add_audit_log(meeting_id, "room_created", "Meeting Room Created", 
-                     f"Room {meeting_id} created by {host_name} ({session.get('role', 'interviewer')})", 
+
+    state.add_audit_log(meeting_id, "room_created", "Meeting Room Created",
+                     f"Room {meeting_id} created by {host_name}",
                      confidence=1.0, is_critical=False)
-    
-    return meeting_id, signed_link
+
+    return meeting_id, signed_link, host_token
 
 @bp.route("/api/room/<meeting_id>", methods=["GET"])
 def get_room(meeting_id):
@@ -652,7 +605,7 @@ def get_room(meeting_id):
     room = state.get_meeting_room(meeting_id.upper())
     if not room:
         return jsonify({"error": "Room not found"}), 404
-    if not (_is_host_request() or _verified_meeting_id() == room["id"]):
+    if not (_is_host_request(room["id"]) or _verified_meeting_id() == room["id"]):
         return jsonify({"error": "Unauthorized"}), 401
     return jsonify({
         "id": room["id"],
@@ -666,7 +619,7 @@ def get_room(meeting_id):
 @bp.route("/api/room/<meeting_id>/invite-link", methods=["GET"])
 def regenerate_invite_link(meeting_id):
     """Regenerate signed invite link for an existing room."""
-    if not session.get('host_authenticated'):
+    if not _is_host_request(meeting_id.upper()):
         return jsonify({"error": "Unauthorized"}), 401
     
     room = state.get_meeting_room(meeting_id.upper())
@@ -758,7 +711,7 @@ def _validate_partner_api_key(partner_id, api_key):
 @bp.route("/api/audit/<meeting_id>", methods=["GET"])
 def get_audit_logs(meeting_id):
     """Get audit logs for a meeting from the database."""
-    if not session.get('host_authenticated'):
+    if not _is_host_request(meeting_id.upper()):
         return jsonify({"error": "Unauthorized"}), 401
     
     limit = request.args.get('limit', 100, type=int)
@@ -773,7 +726,7 @@ def get_audit_logs(meeting_id):
 @bp.route("/api/analytics/<meeting_id>", methods=["GET"])
 def get_meeting_analytics(meeting_id):
     """Get comprehensive analytics for a meeting."""
-    if not session.get('host_authenticated'):
+    if not _is_host_request(meeting_id.upper()):
         return jsonify({"error": "Unauthorized"}), 401
     
     analytics = db.get_meeting_analytics(meeting_id.upper())
@@ -783,7 +736,7 @@ def get_meeting_analytics(meeting_id):
 @bp.route("/api/partner/<partner_id>/analytics", methods=["GET"])
 def get_partner_analytics(partner_id):
     """Get analytics for a partner over time period."""
-    if not session.get('host_authenticated'):
+    if not _is_host_request():
         return jsonify({"error": "Unauthorized"}), 401
     
     days = request.args.get('days', 30, type=int)
@@ -823,7 +776,7 @@ def end_session(meeting_id):
     data = request.get_json(silent=True) or {}
     mid = (data.get("meetingId") or meeting_id or "").upper()
 
-    if not (_is_host_request() or _is_candidate_request()):
+    if not (_is_host_request(mid) or _is_candidate_request()):
         return jsonify({"error": "Unauthorized"}), 403
 
     state.end_session(mid)
@@ -852,8 +805,8 @@ def room_invite(meeting_id):
     if request.method == "OPTIONS":
         return jsonify({}), 200
 
-    if not session.get("host_authenticated"):
-        return jsonify({"error": "Host authentication required"}), 401
+    if not _is_host_request(meeting_id.upper()):
+        return jsonify({"error": "Host capability token required"}), 401
 
     meeting_id = meeting_id.upper()
     # Use the DB-aware lookup: the in-memory dict is empty after a server

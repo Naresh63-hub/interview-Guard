@@ -1,3 +1,4 @@
+import secrets
 import time
 from collections import deque
 from database import db
@@ -44,7 +45,8 @@ def get_meeting_room(meeting_id):
                 "participants": existing_room.get("participants", []),
                 "status": status,
                 "metadata": room.get("metadata", {}),
-                "proctoringSettings": room.get("proctoring_settings", {})
+                "proctoringSettings": room.get("proctoring_settings", {}),
+                "hostToken": existing_room.get("hostToken", ""),
             }
             # Sync to in-memory state for performance
             meeting_rooms[room_id] = standardized_room
@@ -70,8 +72,12 @@ def get_latest_meeting_for_user(user_id):
         "proctoringSettings": room.get("proctoring_settings", {})
     }
 
-def create_meeting_room(meeting_id, host, title, metadata=None):
-    """Create meeting room in Supabase and sync to in-memory."""
+def create_meeting_room(meeting_id, host, title, metadata=None, host_token=None):
+    """Create meeting room with a capability token.  The token is generated
+    server-side and returned to the creator only — it is never persisted to
+    Supabase (exists only in the in-memory dict for the lifetime of the process)."""
+    if host_token is None:
+        host_token = secrets.token_urlsafe(32)
     if db.connected:
         success = db.create_meeting_room(meeting_id, host, title, metadata)
         if success:
@@ -87,7 +93,8 @@ def create_meeting_room(meeting_id, host, title, metadata=None):
                     "participants": room.get("participants", []),
                     "status": room.get("status", "waiting"),
                     "metadata": room.get("metadata", metadata or {}),
-                    "proctoringSettings": room.get("proctoring_settings", {})
+                    "proctoringSettings": room.get("proctoring_settings", {}),
+                    "hostToken": host_token,
                 }
                 return meeting_rooms[room_id]
     # Fallback to in-memory
@@ -99,7 +106,8 @@ def create_meeting_room(meeting_id, host, title, metadata=None):
         "createdAt": time.time(),
         "participants": [],
         "status": "waiting",
-        "metadata": metadata or {}
+        "metadata": metadata or {},
+        "hostToken": host_token,
     }
     return meeting_rooms[meeting_id]
 

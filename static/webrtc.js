@@ -198,6 +198,7 @@ function setupSocket() {
             meetingId: MEETING_ID,
             userName: currentDisplayName,
             role: userRole,
+            hostToken: (typeof HOST_TOKEN !== "undefined" ? HOST_TOKEN : "") || "",
         });
         window.socket.emit("media_state_change", {
             meetingId: MEETING_ID,
