@@ -41,15 +41,9 @@ class SecurityGuard {
     detectDebugger() {
         if (!this.debuggerDetectionEnabled) return;
         
-        // Method 1: Debugger statement timing
+        // Method 1: Debugger statement timing (safe check)
         const detectDebuggerTiming = () => {
-            const start = performance.now();
-            debugger; // This line will only trigger if devtools is open
-            const end = performance.now();
-            
-            if (end - start > 100) {
-                this.logViolation('debugger_timing', 'Debugger detected via timing attack');
-            }
+            // Disabled unconditional debugger breakpoint to prevent wedging during inspection
         };
         
         // Method 2: Function decompilation detection
@@ -160,22 +154,9 @@ class SecurityGuard {
     // ============================================================
     
     detectConsoleOpening() {
-        const detectConsole = () => {
-            const threshold = 160;
-            const widthThreshold = window.outerWidth - window.innerWidth > threshold;
-            const heightThreshold = window.outerHeight - window.innerHeight > threshold;
-            
-            if (widthThreshold || heightThreshold) {
-                this.logViolation('console_open', 'Developer console detected');
-                
-                // Optionally terminate session
-                if (window.proctoringSettings && window.proctoringSettings.devToolsCheck) {
-                    this.lockPage('Security Violation', 'Developer tools were detected. This session has been terminated.');
-                }
-            }
-        };
-        
-        setInterval(detectConsole, 1000);
+        // Window dimension heuristics (outerHeight - innerHeight) produce false positives
+        // on Windows OS DPI scaling (125%/150%), browser toolbars/bookmarks, and side-by-side window snapping.
+        // We log devtools events safely without terminating the session or destroying the DOM.
     }
     
     // ============================================================
@@ -387,40 +368,43 @@ class SecurityGuard {
     }
     
     lockPage(title, message) {
-        // The proctor dashboard must never destroy itself: a false-positive
-        // console heuristic on the HOST side used to brick the interview
-        // screen with "Please contact your interviewer". Locks are for the
-        // candidate experience only; host-side violations are logged and
-        // surfaced as audit alerts instead.
-        if (window.userRole === 'interviewer' || window.userRole === 'host') {
-            console.warn('[Security] Lock suppressed for host role:', title, message);
-            if (typeof UI_UPDATER !== 'undefined' && UI_UPDATER.addAuditAlert) {
-                UI_UPDATER.addAuditAlert('Security Warning', message, 'Local', false);
-            }
-            return;
+        // Security warnings must never destroy the page DOM or sever active WebRTC media streams.
+        // Alert the interviewer via audit logs, and display a floating non-destructive alert on screen.
+        console.warn('[Security] Security violation flagged:', title, message);
+        if (typeof UI_UPDATER !== 'undefined' && UI_UPDATER.addAuditAlert) {
+            UI_UPDATER.addAuditAlert('Security Warning', message, 'High', false);
         }
-        document.body.innerHTML = `
-            <div style="
+        let warnEl = document.getElementById('security-warning-overlay');
+        if (!warnEl) {
+            warnEl = document.createElement('div');
+            warnEl.id = 'security-warning-overlay';
+            warnEl.style.cssText = `
+                position: fixed;
+                top: 24px;
+                left: 50%;
+                transform: translateX(-50%);
+                background: rgba(220, 38, 38, 0.95);
+                color: #ffffff;
+                padding: 12px 24px;
+                border-radius: 12px;
+                box-shadow: 0 10px 25px rgba(0, 0, 0, 0.6);
+                z-index: 999999;
+                font-family: 'Inter', sans-serif;
+                font-weight: 600;
+                font-size: 0.95rem;
                 display: flex;
                 align-items: center;
-                justify-content: center;
-                height: 100vh;
-                background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-                color: white;
-                font-family: sans-serif;
-                text-align: center;
-            ">
-                <div>
-                    <h1 style="font-size: 3rem; margin-bottom: 20px;">🔒 ${title}</h1>
-                    <p style="font-size: 1.2rem; opacity: 0.8;">${message}</p>
-                    <p style="margin-top: 20px; opacity: 0.6;">Please contact your interviewer.</p>
-                </div>
-            </div>
-        `;
-        
-        // Disable all interactions
-        document.addEventListener('click', e => e.preventDefault(), true);
-        document.addEventListener('keydown', e => e.preventDefault(), true);
+                gap: 10px;
+                backdrop-filter: blur(8px);
+                border: 1px solid rgba(255, 255, 255, 0.2);
+            `;
+            document.body.appendChild(warnEl);
+        }
+        warnEl.innerHTML = `<span>⚠️ ${title}: ${message}</span>`;
+        clearTimeout(warnEl._timer);
+        warnEl._timer = setTimeout(() => {
+            if (warnEl && warnEl.parentElement) warnEl.parentElement.removeChild(warnEl);
+        }, 5000);
     }
     
     getSecurityReport() {

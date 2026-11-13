@@ -142,6 +142,9 @@ def _request_meeting_id() -> str:
     meeting_id = (request.headers.get("X-Meeting-Id") or "").strip().upper()
     if meeting_id:
         return meeting_id
+    meeting_id = (request.args.get("meetingId") or request.args.get("meeting_id") or "").strip().upper()
+    if meeting_id:
+        return meeting_id
     payload = request.get_json(silent=True) or {}
     meeting_id = (payload.get("meetingId") or "").strip().upper()
     if meeting_id:
@@ -285,7 +288,8 @@ def host_join():
 
     if meeting_id:
         token = (request.headers.get("X-Meeting-Host-Token", "").strip()
-                 or (data.get("hostToken") or "").strip())
+                 or (data.get("hostToken") or "").strip()
+                 or session.get(f"host_token_{meeting_id}", ""))
         room = state.get_meeting_room(meeting_id)
         if not room:
             return jsonify({"error": "Room not found"}), 404
@@ -361,6 +365,7 @@ def host_dashboard(meeting_id):
     room = state.get_meeting_room(meeting_id)
     if not room:
         room = state.create_meeting_room(meeting_id, session.get('displayName', 'Host'), "Interview Session")
+        session[f"host_token_{meeting_id}"] = room.get("hostToken", "")
 
     return render_template(
         "host_dashboard.html",
@@ -776,7 +781,13 @@ def end_session(meeting_id):
     data = request.get_json(silent=True) or {}
     mid = (data.get("meetingId") or meeting_id or "").upper()
 
-    if not (_is_host_request(mid) or _is_candidate_request()):
+    body_token = (data.get("hostToken") or "").strip()
+    room = state.get_meeting_room(mid)
+    is_host = (bool(body_token and room and body_token == room.get("hostToken", ""))
+               or _is_host_request(mid))
+    is_cand = _is_candidate_request() or (session.get("candidate_verified_meeting") or "").upper() == mid
+
+    if not (is_host or is_cand):
         return jsonify({"error": "Unauthorized"}), 403
 
     state.end_session(mid)

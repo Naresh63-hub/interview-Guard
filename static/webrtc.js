@@ -47,6 +47,50 @@ const ADVANCED_ICE_SERVERS = {
 
 let makingOffer = false;
 let ignoreOffer = false;
+let watchdogStarted = false;
+// Trickle-ICE queue: candidates that arrive before the peer's SDP (remote
+// description) exists are buffered here and flushed after setRemoteDescription.
+// Adding them earlier throws OperationError and the candidate was silently lost,
+// which could strand the connection in a never-connecting state.
+let pendingRemoteCandidates = [];
+let recoveryTimer = null;
+let pendingOfferAfterMedia = false;
+let lastNegotiationAttempt = 0;
+
+function hasLocalMedia() {
+    const curStream = (typeof window !== "undefined" && window.localStream) || localStream;
+    return !!(curStream && curStream.getTracks().length > 0);
+}
+
+// Queue-safe setRemoteDescription: applies the SDP, then flushes any ICE
+// candidates that arrived first.
+async function setRemoteDescriptionSafely(pc, sdp) {
+    await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+    const queued = pendingRemoteCandidates;
+    pendingRemoteCandidates = [];
+    for (const candidate of queued) {
+        try {
+            await pc.addIceCandidate(candidate);
+        } catch (err) {
+            console.warn("flushed candidate failed:", err);
+        }
+    }
+}
+
+function addIceCandidateSafely(candidate) {
+    if (!peerConnection) {
+        pendingRemoteCandidates.push(candidate);
+        return;
+    }
+    if (!peerConnection.remoteDescription) {
+        // Remote SDP not applied yet — queue instead of throwing.
+        pendingRemoteCandidates.push(candidate);
+        return;
+    }
+    peerConnection.addIceCandidate(candidate).catch((err) => {
+        if (!ignoreOffer) console.error("ice candidate failed:", err);
+    });
+}
 
 function createPeerConnection() {
     const pc = new RTCPeerConnection(ADVANCED_ICE_SERVERS);
@@ -67,9 +111,23 @@ function createPeerConnection() {
             if (typeof UI_UPDATER !== 'undefined') {
                 UI_UPDATER.addAuditAlert("Network Issue", "Video connection dropped. Attempting recovery.", "", true);
             }
-            // Auto-recovery
-            if (remoteSid && pc.connectionState === 'failed') {
-                createAndSendOffer();
+            // Debounced auto-recovery — re-offer once, not on every state flip.
+            if (remoteSid && pc.connectionState === 'failed' && !recoveryTimer) {
+                recoveryTimer = setTimeout(() => {
+                    recoveryTimer = null;
+                    if (peerConnection === pc && hasLocalMedia()) {
+                        if (pc.signalingState === "stable") {
+                            createAndSendOffer();
+                        } else {
+                            // Collided negotiation — tear down and restart clean.
+                            peerConnection.close();
+                            peerConnection = null;
+                            pendingRemoteCandidates = [];
+                            peerConnection = createPeerConnection();
+                            createAndSendOffer();
+                        }
+                    }
+                }, 3000);
             }
         } else if (pc.connectionState === 'connected') {
             if (typeof UI_UPDATER !== 'undefined') {
@@ -154,9 +212,10 @@ function createPeerConnection() {
         }
     };
 
-    if (localStream) {
-        localStream.getTracks().forEach((track) =>
-            pc.addTrack(track, localStream)
+    const curStream = (typeof window !== "undefined" && window.localStream) || (typeof localStream !== "undefined" ? localStream : null);
+    if (curStream) {
+        curStream.getTracks().forEach((track) =>
+            pc.addTrack(track, curStream)
         );
     }
 
@@ -166,8 +225,18 @@ function createPeerConnection() {
 async function createAndSendOffer() {
     if (!peerConnection) return;
     if (!window.socket || !window.socket.connected) return; // recovery offers are dropped otherwise
+    if (!hasLocalMedia()) {
+        // Camera not ready (slow permission prompt / retry): an offer without
+        // media tracks negotiates a media-less session that was never
+        // renegotiated — neither side ever saw the other. Retry once the
+        // stream arrives (see startWebcam).
+        console.warn("createAndSendOffer: no local media yet — deferring until camera is ready.");
+        pendingOfferAfterMedia = true;
+        return;
+    }
     try {
         makingOffer = true;
+        lastNegotiationAttempt = Date.now();
         const offer = await peerConnection.createOffer();
         await peerConnection.setLocalDescription(offer);
         window.socket.emit("offer", {
@@ -184,6 +253,32 @@ async function createAndSendOffer() {
 
 function setupSocket() {
     if (typeof io === "undefined" || !MEETING_ID) return;
+
+    // Watchdog: both peers are in the room but negotiation stalled (dropped
+    // glare offer, dead socket-id routing, ICE failure without a state flip).
+    // Periodically force a clean re-negotiation until media connects.
+    if (!watchdogStarted) {
+        watchdogStarted = true;
+        setInterval(() => {
+            if (!remoteSid || participantCount < 2) return;
+            if (!hasLocalMedia()) return;
+            const state = peerConnection ? peerConnection.connectionState : "none";
+            if (state === "connected") return;
+            if (makingOffer) return;
+            const since = Date.now() - lastNegotiationAttempt;
+            if (since > 12000) {
+                console.warn("[WebRTC] Negotiation watchdog: re-negotiating (state:", state, ")");
+                if (peerConnection) {
+                    peerConnection.close();
+                    peerConnection = null;
+                }
+                pendingRemoteCandidates = [];
+                ignoreOffer = false;
+                peerConnection = createPeerConnection();
+                createAndSendOffer();
+            }
+        }, 6000);
+    }
 
     window.socket = io(API_ORIGIN, {
         transports: ["websocket", "polling"],
@@ -249,10 +344,16 @@ function setupSocket() {
 
         if (otherPeer) {
             const peerSid = otherPeer.socketId || otherPeer.socket_id;
+            // Always re-sync routing: after a peer reconnect their socket id
+            // changes, and offers/answers/ICE targeted at the old sid are
+            // silently delivered to nobody.
             if (peerSid) remoteSid = peerSid;
             console.log("[Socket] Peer found in room_info:", remoteSid);
-            const curStream = window.localStream || localStream;
-            if (!peerConnection && curStream) {
+            if (!peerConnection && remoteSid) {
+                // If the camera isn't ready yet, createAndSendOffer defers and
+                // startWebcam flushes the offer once media arrives.
+                pendingRemoteCandidates = [];
+                ignoreOffer = false;
                 peerConnection = createPeerConnection();
                 await createAndSendOffer();
             }
@@ -290,17 +391,29 @@ function setupSocket() {
 
     window.socket.on("user_joined", async (data) => {
         console.log("[Socket] User joined:", data);
-        remoteSid = data.sid || data.socketId || data.id;
+        const joinedSid = data.sid || data.socketId || data.id;
+        // Re-join of the peer we're already negotiating with (socket reconnect):
+        // don't tear down a working connection. The room_info that follows the
+        // rejoin re-syncs routing.
+        if (joinedSid && joinedSid === remoteSid && peerConnection) {
+            console.log("[Socket] Peer re-joined with same socket id — keeping peer connection");
+            return;
+        }
+        remoteSid = joinedSid;
         participantCount = Math.max(participantCount, 2);
         if (!sessionStartTime) sessionStartTime = Date.now();
         
-        UI_UPDATER.addAuditAlert("Participant Joined", `${data.userName || 'Candidate'} joined the meeting.`);
+        if (typeof UI_UPDATER !== 'undefined' && UI_UPDATER.addAuditAlert) {
+            UI_UPDATER.addAuditAlert("Participant Joined", `${data.userName || 'Candidate'} joined the meeting.`);
+        }
         
         // Tear down any stale connection before negotiating with the new peer
         if (peerConnection) {
             peerConnection.close();
             peerConnection = null;
         }
+        pendingRemoteCandidates = [];
+        ignoreOffer = false;
         peerConnection = createPeerConnection();
         await createAndSendOffer();
     });
@@ -331,18 +444,34 @@ function setupSocket() {
         }
 
         // Polite peer rolls its own pending offer back to stable so it can
-        // accept (and answer) the incoming one.
+        // accept (and answer) the incoming one. Rollback is only legal in
+        // "have-local-offer" — in any other non-stable state the safest exit
+        // is a clean teardown + re-negotiation as the answerer, instead of
+        // throwing and silently dropping the peer's offer (deadlock: both
+        // sides connected, neither displaying the other).
         if (offerCollision) {
-            try {
-                await peerConnection.setLocalDescription({ type: "rollback" });
-            } catch (rollbackErr) {
-                console.warn("offer collision: could not rollback, skipping:", rollbackErr);
-                return;
+            if (peerConnection.signalingState === "have-local-offer") {
+                try {
+                    await peerConnection.setLocalDescription({ type: "rollback" });
+                } catch (rollbackErr) {
+                    console.warn("offer collision: rollback failed, restarting pc:", rollbackErr);
+                    peerConnection.close();
+                    peerConnection = null;
+                    pendingRemoteCandidates = [];
+                    peerConnection = createPeerConnection();
+                }
+            } else {
+                console.warn("offer collision in signalingState", peerConnection.signalingState, "— restarting peer connection");
+                peerConnection.close();
+                peerConnection = null;
+                pendingRemoteCandidates = [];
+                peerConnection = createPeerConnection();
             }
+            makingOffer = false;
         }
 
         try {
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
+            await setRemoteDescriptionSafely(peerConnection, data.sdp);
             // Ensure any local tracks we have are attached before answering
             const curStream = window.localStream || localStream;
             if (curStream) {
@@ -372,18 +501,23 @@ function setupSocket() {
     });
 
     window.socket.on("answer", async (data) => {
+        if (ignoreOffer) {
+            // The offer this answer refers to was dropped during glare — ignore.
+            return;
+        }
         if (!peerConnection) return;
         try {
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
+            await setRemoteDescriptionSafely(peerConnection, data.sdp);
         } catch (err) { 
             console.error("answer handling failed:", err);
         }
     });
 
     window.socket.on("ice_candidate", async (data) => {
-        if (!peerConnection || !data.candidate) return;
+        if (!data.candidate) return;
+        if (ignoreOffer) return; // candidates for a dropped colliding offer
         try {
-            await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+            addIceCandidateSafely(new RTCIceCandidate(data.candidate));
         } catch (err) { 
             if (!ignoreOffer) {
                 console.error("ice candidate failed:", err);
@@ -392,11 +526,17 @@ function setupSocket() {
     });
     
     window.socket.on("user_left", (data) => {
-        UI_UPDATER.addAuditAlert("Participant Left", `${data.userName || 'Candidate'} left the meeting.`, "", true);
+        if (typeof UI_UPDATER !== 'undefined' && UI_UPDATER.addAuditAlert) {
+            UI_UPDATER.addAuditAlert("Participant Left", `${data.userName || 'Candidate'} left the meeting.`, "", true);
+        }
         if (peerConnection) {
             peerConnection.close();
             peerConnection = null;
         }
+        pendingRemoteCandidates = [];
+        ignoreOffer = false;
+        makingOffer = false;
+        pendingOfferAfterMedia = false;
         const remoteVideo = document.getElementById("remote-video");
         const remotePip = document.getElementById("remote-video-pip");
         const remoteAudio = document.getElementById("remote-audio");
@@ -404,15 +544,17 @@ function setupSocket() {
         if (remotePip) { remotePip.style.display = "none"; }
         if (remoteAudio) { remoteAudio.srcObject = null; }
         // Return to local stream view only for candidates
-        if (userRole === "candidate" && localStream) {
-            videoElement.srcObject = localStream;
-            videoElement.muted = true;
-            videoElement.style.background = "";
-            videoElement.play().catch(e => console.log(e));
-        } else if (userRole === "host" || userRole === "interviewer") {
+        const mainVideo = document.getElementById("main-video");
+        const curStream = (typeof window !== "undefined" && window.localStream) || (typeof localStream !== "undefined" ? localStream : null);
+        if (userRole === "candidate" && curStream && mainVideo) {
+            mainVideo.srcObject = curStream;
+            mainVideo.muted = true;
+            mainVideo.style.background = "";
+            mainVideo.play().catch(e => console.log(e));
+        } else if ((userRole === "host" || userRole === "interviewer") && mainVideo) {
             // Host shows placeholder when participant leaves
-            videoElement.srcObject = null;
-            videoElement.style.background = "linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)";
+            mainVideo.srcObject = null;
+            mainVideo.style.background = "linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)";
             console.log("Host showing placeholder after participant left");
         }
     });
@@ -502,7 +644,8 @@ function setupSocket() {
                 updateModeratorButtonsUI();
                 
                 // If candidate video is stopped, show placeholder on host side
-                if (window.candidateVideoStopped && videoElement && videoElement.srcObject) {
+                const mainVideoEl = document.getElementById("main-video");
+                if (window.candidateVideoStopped && mainVideoEl && mainVideoEl.srcObject) {
                     // Keep the video element but show a placeholder overlay
                     console.log("[Socket] Candidate video stopped, showing placeholder on host");
                 }
@@ -671,10 +814,7 @@ function showCameraErrorOverlay(info) {
 
 async function startWebcam() {
     try {
-        // Ensure DOM elements are initialized
-        if (!videoElement) {
-            initializeDOMElements();
-        }
+        initializeDOMElements();
         
         // Camera APIs only exist in secure contexts (HTTPS / localhost).
         // Detect this up-front and explain it, instead of a generic "denied".
@@ -738,17 +878,17 @@ async function startWebcam() {
             try { await localVideo.play(); } catch { }
         }
 
-        // Only show local video in main area for candidates, not for hosts
-        // Hosts should wait for remote video from candidate
-        if (userRole === "candidate" && videoElement && !videoElement.srcObject) {
-            videoElement.srcObject = localStream;
-            videoElement.muted = true; // Prevent echo
-            videoElement.style.background = ""; // Clear any placeholder
-            try { await videoElement.play(); } catch { }
+        // Set main video view
+        const mainVideoEl = document.getElementById("main-video");
+        if (userRole === "candidate" && mainVideoEl && !mainVideoEl.srcObject) {
+            mainVideoEl.srcObject = localStream;
+            mainVideoEl.muted = true; // Prevent echo
+            mainVideoEl.style.background = ""; // Clear any placeholder
+            try { await mainVideoEl.play(); } catch { }
             console.log("[WebRTC] Set local video in main area for candidate");
-        } else if (userRole === "host" || userRole === "interviewer") {
+        } else if ((userRole === "host" || userRole === "interviewer") && mainVideoEl) {
             // Host shows placeholder until candidate joins
-            videoElement.style.background = "linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)";
+            mainVideoEl.style.background = "linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)";
             console.log("Host waiting for remote video from candidate");
         }
 
@@ -784,6 +924,20 @@ async function startWebcam() {
                 }
             } catch (renegErr) {
                 console.warn("[WebRTC] Could not renegotiate after camera restart:", renegErr);
+            }
+        }
+
+        // An earlier offer attempt was deferred because the camera wasn't
+        // ready yet (permission prompt, retry). Now that media exists,
+        // kick negotiation off again so the peer stops waiting.
+        if (pendingOfferAfterMedia) {
+            pendingOfferAfterMedia = false;
+            if (!peerConnection && remoteSid) {
+                peerConnection = createPeerConnection();
+            }
+            if (peerConnection && peerConnection.signalingState === "stable") {
+                console.log("[WebRTC] Local media ready — flushing deferred offer");
+                createAndSendOffer();
             }
         }
 
@@ -868,9 +1022,10 @@ function toggleVideo() {
         if (textVideo) textVideo.textContent = "Start Cam";
         
         // For candidate, show placeholder when camera is off
-        if (userRole === "candidate" && videoElement) {
-            videoElement.style.background = "linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)";
-            videoElement.srcObject = null; // Clear video stream
+        const mainVideoEl = document.getElementById("main-video");
+        if (userRole === "candidate" && mainVideoEl) {
+            mainVideoEl.style.background = "linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)";
+            mainVideoEl.srcObject = null; // Clear video stream
         }
     } else {
         if (iconVideo) iconVideo.classList.replace("ph-video-camera-slash", "ph-video-camera");
@@ -878,10 +1033,12 @@ function toggleVideo() {
         if (textVideo) textVideo.textContent = "Stop Cam";
         
         // For candidate, restore video when camera is on
-        if (userRole === "candidate" && videoElement) {
-            videoElement.style.background = "";
-            videoElement.srcObject = localStream;
-            videoElement.play().catch(e => console.log("Video play error:", e));
+        const mainVideoEl = document.getElementById("main-video");
+        const curStream = (typeof window !== "undefined" && window.localStream) || (typeof localStream !== "undefined" ? localStream : null);
+        if (userRole === "candidate" && mainVideoEl && curStream) {
+            mainVideoEl.style.background = "";
+            mainVideoEl.srcObject = curStream;
+            mainVideoEl.play().catch(e => console.log("Video play error:", e));
         }
     }
 
@@ -926,11 +1083,13 @@ async function toggleScreenShare() {
             screenVideoEl = null;
         }
         setBadge(badgeScreenShare, badgeShareLabel, badgeShareIcon, "Share Screen", "", "ph ph-monitor-arrow-up");
-        UI_UPDATER.addAuditAlert(
-            "Screen share stopped",
-            "Screen sharing ended.",
-            "User action",
-        );
+        if (typeof UI_UPDATER !== 'undefined' && UI_UPDATER.addAuditAlert) {
+            UI_UPDATER.addAuditAlert(
+                "Screen share stopped",
+                "Screen sharing ended.",
+                "User action",
+            );
+        }
         return;
     }
 
@@ -952,11 +1111,13 @@ async function toggleScreenShare() {
 
         setBadge(badgeScreenShare, badgeShareLabel, badgeShareIcon, "Sharing Screen", "green", "ph ph-monitor-arrow-up");
 
-        UI_UPDATER.addAuditAlert(
-            "Screen share started",
-            `${currentDisplayName} is now sharing their screen.`,
-            "User action",
-        );
+        if (typeof UI_UPDATER !== 'undefined' && UI_UPDATER.addAuditAlert) {
+            UI_UPDATER.addAuditAlert(
+                "Screen share started",
+                `${currentDisplayName} is now sharing their screen.`,
+                "User action",
+            );
+        }
 
         screenStream.getVideoTracks()[0].addEventListener("ended", () => {
             toggleScreenShare();

@@ -54,6 +54,8 @@ def register_sockets(socketio):
         from flask import session
         if role == "interviewer":
             host_token = (data.get("hostToken") or "").strip()
+            if not host_token:
+                host_token = session.get(f"host_token_{meeting_id}", "")
             if not host_token or host_token != room.get("hostToken", ""):
                 emit("error", {"message": "Unauthorized: Invalid host capability token"})
                 return
@@ -185,22 +187,18 @@ def register_sockets(socketio):
     def on_end_meeting(data):
         meeting_id = (data.get("meetingId") or "").upper()
         from flask import session
-        # A member of the room may always end it. But the in-memory
-        # participant list can be empty for a legitimately-authenticated host
-        # when the room was just re-fetched from a DB that stores participants
-        # in a different shape — that must NOT silently swallow the broadcast
-        # and leave the candidate's page running. Fall back to the verified
-        # host/candidate session so the end signal always propagates.
-        if _participant_role(meeting_id) is None:
-            host_token = (data.get("hostToken") or "").strip()
-            if not host_token:
-                host_token = session.get(f"host_token_{meeting_id}", "")
-            room = state.get_meeting_room(meeting_id)
-            is_host = bool(host_token and room and host_token == room.get("hostToken", ""))
-            cand_mid = (session.get("candidate_verified_meeting") or "").upper()
-            is_candidate_of_room = cand_mid == meeting_id and bool(cand_mid)
-            if not (is_host or is_candidate_of_room):
-                return
+        # A member of the room may always end it. If the in-memory
+        # participant list is empty or disconnected, fall back to checking
+        # capability token or verified candidate session.
+        host_token = (data.get("hostToken") or "").strip()
+        if not host_token:
+            host_token = session.get(f"host_token_{meeting_id}", "")
+        room = state.get_meeting_room(meeting_id)
+        is_host = bool(host_token and room and host_token == room.get("hostToken", "")) or _is_host_socket(meeting_id)
+        cand_mid = (session.get("candidate_verified_meeting") or "").upper()
+        is_candidate_of_room = (cand_mid == meeting_id and bool(cand_mid)) or _is_candidate_socket(meeting_id)
+        if not (is_host or is_candidate_of_room):
+            return
 
         state.end_session(meeting_id)
         room = state.get_meeting_room(meeting_id)

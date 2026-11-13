@@ -37,6 +37,8 @@ def get_meeting_room(meeting_id):
         if room:
             # Convert the Supabase row to the expected structure
             status = existing_room.get("status") if existing_room.get("status") == "ended" else room.get("status", "waiting")
+            db_metadata = room.get("metadata", {}) or room.get("settings", {})
+            saved_token = existing_room.get("hostToken") or db_metadata.get("hostToken", "")
             standardized_room = {
                 "id": room_id,
                 "title": room.get("title", ""),
@@ -44,9 +46,9 @@ def get_meeting_room(meeting_id):
                 "createdAt": room.get("created_at", time.time()),
                 "participants": existing_room.get("participants", []),
                 "status": status,
-                "metadata": room.get("metadata", {}),
+                "metadata": db_metadata,
                 "proctoringSettings": room.get("proctoring_settings", {}),
-                "hostToken": existing_room.get("hostToken", ""),
+                "hostToken": saved_token,
             }
             # Sync to in-memory state for performance
             meeting_rooms[room_id] = standardized_room
@@ -74,10 +76,11 @@ def get_latest_meeting_for_user(user_id):
 
 def create_meeting_room(meeting_id, host, title, metadata=None, host_token=None):
     """Create meeting room with a capability token.  The token is generated
-    server-side and returned to the creator only — it is never persisted to
-    Supabase (exists only in the in-memory dict for the lifetime of the process)."""
+    server-side and persisted in room metadata."""
     if host_token is None:
         host_token = secrets.token_urlsafe(32)
+    metadata = dict(metadata or {})
+    metadata["hostToken"] = host_token
     if db.connected:
         success = db.create_meeting_room(meeting_id, host, title, metadata)
         if success:

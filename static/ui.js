@@ -88,6 +88,7 @@ if (userRole === "candidate") {
 
 // ─── DOM References ───────────────────────────────────────────────────────────
 const videoElement = document.getElementById("main-video");
+window.videoElement = videoElement;
 const btnMute = document.getElementById("btn-mute");
 const btnVideo = document.getElementById("btn-video");
 const iconMute = document.getElementById("icon-mute");
@@ -563,6 +564,7 @@ function applySessionStatus(status) {
 // ─── Host Capability Token Helper ────────────────────────────────────────────
 const _hostToken = () =>
     (typeof HOST_TOKEN !== "undefined" && HOST_TOKEN)
+    || (typeof window !== "undefined" && window.HOST_TOKEN)
     || sessionStorage.getItem('hostToken_' + (typeof MEETING_ID !== 'undefined' ? MEETING_ID : ''))
     || '';
 
@@ -739,12 +741,14 @@ if (btnEnd) {
 }
 
 async function endInterview() {
+    const token = _hostToken();
     // 1. Notify meeting participants via Socket.IO
     if (window.socket && window.socket.connected) {
         try {
             window.socket.emit("end_meeting", {
                 meetingId: MEETING_ID,
                 role: userRole,
+                hostToken: token,
             });
         } catch (sockErr) {
             console.warn("Socket end_meeting emit failed:", sockErr);
@@ -770,7 +774,7 @@ async function endInterview() {
         await fetch(`/api/session/${MEETING_ID}/end`, {
             method: "POST",
             headers: _hostHeaders({ "Content-Type": "application/json" }),
-            body: JSON.stringify({ meetingId: MEETING_ID }),
+            body: JSON.stringify({ meetingId: MEETING_ID, hostToken: token }),
         });
     } catch (apiErr) {
         console.warn("api end_session failed:", apiErr.message);
@@ -784,7 +788,10 @@ async function endInterview() {
 
     localStorage.removeItem("role");
     localStorage.removeItem("displayName");
-    window.location.href = pageUrl(LOGIN_PATH);
+    // Short pause so network packets and socket frame flush before navigation
+    setTimeout(() => {
+        window.location.href = pageUrl(LOGIN_PATH);
+    }, 300);
 }
 window.endInterview = endInterview;
 
